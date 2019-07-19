@@ -1,10 +1,16 @@
 package jardeduplicate;
 
 import java.nio.file.Path;
-import java.util.zip.ZipEntry;
+
+import org.eclipse.jgit.lib.ObjectId;
 
 public interface ZipInfoCollector {
-	void newZipFile(Path path);
-	void newEntry(ZipEntry nextEntry);
-	void endOfZipFile();
+	
+	ZipInfoCollector resolve(Path path);
+	
+	ZipInfo newZipFile(Path name);
+
+	byte[] dumpInfo();
+
+	void linkDataContainer(ObjectId commitId);
 }
