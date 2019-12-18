@@ -14,7 +14,7 @@ public class ZipInfoWithTime implements ZipInfo, Serializable {
 
 	private transient Map<String, Info> mappedByName = new TreeMap();
 	private List<Info> infos = new LinkedList<>();
-	private String[] nameParts;
+	private String nameParts;
 
 	public static class Info implements Serializable {
 		private long time;
@@ -24,12 +24,11 @@ public class ZipInfoWithTime implements ZipInfo, Serializable {
 		private Info(ZipEntry ze) {
 			time = ze.getTime();
 			comment = Optional.ofNullable(ze.getComment()).map(String::intern).orElse(null);
-			StringDeduplicationHelper.splitPath(ze.getName());
 		}
 	}
 
 	public ZipInfoWithTime(Path name) {
-		this.nameParts = StringDeduplicationHelper.splitPath(name.toString());
+		this.nameParts = name.toString();
 	}
 
 	@Override

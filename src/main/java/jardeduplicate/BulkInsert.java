@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -20,6 +22,11 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -42,6 +49,9 @@ import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.ietf.jgss.Oid;
+
+import com.jcraft.jzlib.ZInputStream;
+
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
 
@@ -51,11 +61,22 @@ import io.vavr.control.Either;
 
 public class BulkInsert {
 
+	private static final Integer NO_PARENT = 0;
+	private static final Integer WITH_PARENT = 1;
+
 	private Repository repo;
 	private ThreadLocal<ObjectInserter> oi = ThreadLocal.withInitial(() -> repo.newObjectInserter());
+	private ExecutorService poolForUnlimitedAmountOfJoins;
+	private Predicate<String> additionalFilenameZipPredicate;
 
 	public BulkInsert(Repository repo) {
+		this(repo, (s) -> true);
+	}
+
+	public BulkInsert(Repository repo, Predicate<String> additionalFilenameZipPredicate) {
 		this.repo = repo;
+		this.additionalFilenameZipPredicate = additionalFilenameZipPredicate;
+		this.poolForUnlimitedAmountOfJoins = Executors.newCachedThreadPool();
 	}
 
 	public static void main(String[] args) throws GitAPIException, IOException {
@@ -67,11 +88,15 @@ public class BulkInsert {
 			git = Git.open(workPath.toFile());
 		}
 
+		List<String> extensions = Arrays.asList(".jar", ".war", ".ear", ".zip");
+
 		long startTime = System.currentTimeMillis();
 //		ZipInfoCollector zipInfoCollector = new BaseZipInfoCollector();
 		ZipInfoCollector zipInfoCollector = new DefaultZipInfoCollector();
 
-		ObjectId treeId = new BulkInsert(git.getRepository()).doIt(Paths.get(args[0]), zipInfoCollector);
+		ObjectId treeId = new BulkInsert(git.getRepository(), onlyThisExtensions(extensions))//
+				.doIt(Paths.get(args[0]), zipInfoCollector);
+
 		PersonIdent person = new PersonIdent("test", "test@zipdeduplicate.incubator");
 		Tuple2<Result, ObjectId> result = insertCommitOnBranch(git.getRepository(), treeId, "data", person);
 		System.out.println((System.currentTimeMillis() - startTime) + " ms. UpdateRefResult:" + result._1
@@ -88,19 +113,29 @@ public class BulkInsert {
 		id = oi.insert(treeFormatter);
 		result = insertCommitOnBranch(git.getRepository(), id, "master", person);
 
-		git.gc()//
-//		.setAggressive(true)//
-				.setProgressMonitor(progressMonitor(System.out)).call();
+//		git.gc()//
+////		.setAggressive(true)//
+////		.setPreserveOldPacks(true)
+//		.setPrunePreserved(false)
+//				.setProgressMonitor(progressMonitor(System.out)).call();
+	}
+
+	public static Predicate<String> onlyThisExtensions(List<String> extensions) {
+		return s -> {
+			String sl = s.toLowerCase();
+			return extensions.stream().anyMatch(e -> sl.endsWith(e));
+		};
 	}
 
 	private static ProgressMonitor progressMonitor(PrintStream out) {
 		return new PrintingProgressMonitor(out);
 	}
 
-	public ObjectId doIt(Path pathToAnalyse, ZipInfoCollector zipInfoCollector, Predicate<Path> useHashValueAsName)
-			throws IOException, GitAPIException {
+	public ObjectId doIt(Path pathToAnalyse, ZipInfoCollector zipInfoCollector) throws IOException, GitAPIException {
+
 		Map<Path, List<Tuple2<Path, ObjectId>>> allFilesGroupedByPathes;
-		Map<String, Either<ObjectId, TreeFormatter>> rootElements = Collections.synchronizedMap(new TreeMap<>());
+		Map<String, Either<ObjectId, SortingTreeFormatter>> rootElements = Collections
+				.synchronizedMap(new TreeMap<>(gitNameComperator()));
 
 		Stream<Path> filesToInsert;
 		Path root;
@@ -113,7 +148,7 @@ public class BulkInsert {
 		}
 		try (Stream<Path> walk = filesToInsert) {
 			Stream<Tuple2<Path, ObjectId>> filesWithObjectId = walk.collect(Collectors.toList()).stream()//
-//					.parallel()//
+					.parallel()//
 					.filter(Files::isReadable)//
 					.filter(Files::isRegularFile)//
 					.flatMap(p -> {
@@ -121,28 +156,36 @@ public class BulkInsert {
 						return singleFileToGit(zipInfoCollector.resolve(relP.getParent()), p, relP);
 					});
 
-			Path aktPath = Paths.get("./");
-			allFilesGroupedByPathes = filesWithObjectId//
-					.peek(t -> {
-						if (t._1.getParent() == null) {
-							rootElements.put(t._1.toString(), Either.left(t._2));
-						}
-					}) //
-					.filter(t -> t._1.getParent() != null) //
-					.collect(Collectors.groupingBy( //
-							t -> t._1.getParent(), //
-							Collectors.toList())//
-					);
+			Map<Integer, List<Tuple2<Path, ObjectId>>> splitted = filesWithObjectId
+					.collect(Collectors.groupingBy(t -> t._1().getParent() == null ? NO_PARENT : WITH_PARENT));
+
+			if (splitted.containsKey(NO_PARENT)) {
+				rootElements.putAll(splitted.get(NO_PARENT).stream()//
+						.collect(Collectors.toMap( //
+								t -> t._1.toString(), //
+								t -> Either.left(t._2)//
+						)));
+			}
+
+			if (splitted.containsKey(WITH_PARENT)) {
+				allFilesGroupedByPathes = splitted.get(WITH_PARENT).stream()//
+						.collect(Collectors.groupingBy( //
+								t -> t._1.getParent(), //
+								Collectors.toList())//
+						);
+			} else {
+				allFilesGroupedByPathes = Collections.emptyMap();
+			}
 
 			// Alle inhalte im Git enthalten.
 			// Alle Files nach Parent sortieren.
 		}
 
-		Map<Path, Map<String, Either<ObjectId, TreeFormatter>>> filesGroupedByPathAndSortedByName = sortedMapOfPathesByLengthAndName();
+		Map<Path, Map<String, Either<ObjectId, SortingTreeFormatter>>> filesGroupedByPathAndSortedByName = sortedMapOfPathesByLengthAndName();
 
 		for (Entry<Path, List<Tuple2<Path, ObjectId>>> entry : allFilesGroupedByPathes.entrySet()) {
 			// Either(ObjectId=File,TreeFormater=Verzeichnis)
-			TreeMap<String, Either<ObjectId, TreeFormatter>> elements = new TreeMap<>(gitNameComperator());
+			TreeMap<String, Either<ObjectId, SortingTreeFormatter>> elements = new TreeMap<>(gitNameComperator());
 			for (Tuple2<Path, ObjectId> tup : entry.getValue()) {
 				elements.put(tup._1.getFileName().toString(), Either.left(tup._2));
 			}
@@ -153,26 +196,27 @@ public class BulkInsert {
 		Set<Path> allPathesContainingFiles = allFilesGroupedByPathes.keySet();
 		allPathesContainingFiles.forEach(p -> {
 			while (p.getParent() != null) {
-				Either<ObjectId, TreeFormatter> prev = //
-						filesGroupedByPathAndSortedByName.computeIfAbsent(p.getParent(), o -> new TreeMap<>())
-								.putIfAbsent(p.getFileName().toString() + "/", Either.right(new TreeFormatter())//
+				Either<ObjectId, SortingTreeFormatter> prev = //
+						filesGroupedByPathAndSortedByName
+								.computeIfAbsent(p.getParent(), o -> new TreeMap<>(gitNameComperator()))
+								.putIfAbsent(p.getFileName().toString() + "/", Either.right(createNewTreeFormatter())//
 				);
 				p = p.getParent();
 			}
 		});
 
-		for (Entry<Path, Map<String, Either<ObjectId, TreeFormatter>>> e : filesGroupedByPathAndSortedByName
+		for (Entry<Path, Map<String, Either<ObjectId, SortingTreeFormatter>>> e : filesGroupedByPathAndSortedByName
 				.entrySet()) {
-			TreeFormatter tf = buildTree(e.getKey(), e.getValue(), useHashValueAsName);
-			Map<String, Either<ObjectId, TreeFormatter>> parentTree = Optional.ofNullable(e.getKey().getParent())//
+			SortingTreeFormatter tf = buildTree(e.getKey(), e.getValue());
+			Map<String, Either<ObjectId, SortingTreeFormatter>> parentTree = Optional.ofNullable(e.getKey().getParent())//
 					.map(filesGroupedByPathAndSortedByName::get)//
 					.orElse(rootElements);
 
 			parentTree.put(e.getKey().getFileName().toString() + "/", Either.right(tf));
 		}
 
-		TreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements, useHashValueAsName);
-		ObjectId rootDirId = oi.get().insert(rootFormatter);
+		SortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
+		ObjectId rootDirId = rootFormatter.insert(oi.get());
 
 		return rootDirId;
 	}
@@ -181,11 +225,9 @@ public class BulkInsert {
 			Path relP) {
 		try (InputStream inp = Files.newInputStream(p)) {
 			ZipInputStream zin = new ZipInputStream(inp);
-			Spliterator<Tuple2<Path, ObjectId>> splitarator = tryWritingSingleZipFileToGit(zipInfoCollector, relP, zin)
-					.spliterator();
-			List<Tuple2<Path, ObjectId>> first = new ArrayList<>(1); // ValueHolder for first Object
-			if (splitarator.tryAdvance(first::add)) { // has atleast one Object
-				return Stream.concat(first.stream(), StreamSupport.stream(splitarator, true));
+			ZipEntry firstEntry = zin.getNextEntry();
+			if (firstEntry != null && maybeAZip(relP)) {
+				return singleZipFileToGit(zipInfoCollector, relP, zin, firstEntry).get();
 			} else {
 				try (ByteArrayOutputStream bout = copyToByteArrayOutput(Files.newInputStream(p))) {
 					ObjectId oid = oi.get().insert(Constants.OBJ_BLOB, bout.toByteArray());
@@ -194,9 +236,14 @@ public class BulkInsert {
 					throw new RuntimeException(e);
 				}
 			}
+
 		} catch (IOException e) {
-			e.printStackTrace();
-			return Stream.empty();
+			throw new RuntimeException(e);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RuntimeException(e);
+		} catch (ExecutionException e) {
+			throw new RuntimeException(e);
 		}
 	}
 
@@ -233,25 +280,27 @@ public class BulkInsert {
 		return Tuple.of(updateRef.update(), commitId);
 	}
 
-	private TreeFormatter buildTree(Path basePath, Map<String, Either<ObjectId, TreeFormatter>> content,
-			Predicate<Path> useHashValueAsName) throws IOException {
-		TreeFormatter tf = new TreeFormatter();
+	private SortingTreeFormatter buildTree(Path basePath, Map<String, Either<ObjectId, SortingTreeFormatter>> content)
+			throws IOException {
+		SortingTreeFormatter tf = createNewTreeFormatter();
 
-		for (Entry<String, Either<ObjectId, TreeFormatter>> e2 : content.entrySet()) {
-			Either<ObjectId, TreeFormatter> fileOrTree = e2.getValue();
+		for (Entry<String, Either<ObjectId, SortingTreeFormatter>> e2 : content.entrySet()) {
+			Either<ObjectId, SortingTreeFormatter> fileOrTree = e2.getValue();
 			String name = e2.getKey();
 			if (fileOrTree.isLeft()) {
 				Path path = basePath.resolve(name);
-				name = useHashValueAsName.test(path) ? name : name; // TODO: Do clever trick to not put it a second time, and in right order
 				tf.append(name, FileMode.REGULAR_FILE, fileOrTree.getLeft());
 			} else {
 				name = name.substring(0, name.length() - 1);
 				Path path = basePath.resolve(name);
-				name = useHashValueAsName.test(path) ? name : name; // TODO: Do clever trick to not put it a second time, and in right order
-				tf.append(name, FileMode.TREE, oi.get().insert(fileOrTree.get()));
+				tf.append(name, FileMode.TREE, fileOrTree.get().insert(oi.get()));
 			}
 		}
 		return tf;
+	}
+
+	private SortingTreeFormatter createNewTreeFormatter() {
+		return new SortingTreeFormatter();
 	}
 
 	private static <V> Map<Path, V> sortedMapOfPathesByLengthAndName() {
@@ -265,15 +314,16 @@ public class BulkInsert {
 		});
 	}
 
-	private Stream<Tuple2<Path, ObjectId>> tryWritingSingleZipFileToGit(ZipInfoCollector zipInfoCollector, Path pin,
-			ZipInputStream zin) throws IOException {
+	private Future<Stream<Tuple2<Path, ObjectId>>> singleZipFileToGit(ZipInfoCollector zipInfoCollector, Path pin,
+			ZipInputStream zin, ZipEntry firstEntry) throws IOException {
 		boolean entryProcessed = false;
-		List<Tuple2<Path, ObjectId>> res = new ArrayList<>();
-		ZipEntry nextEntry = zin.getNextEntry();
+		List<Future<Stream<Tuple2<Path, ObjectId>>>> futures = new ArrayList<>();
+		ZipEntry nextEntry = firstEntry;
 		ZipInfo newZipFile = null;
 		while (nextEntry != null) {
 			if (!entryProcessed && zipInfoCollector != null) {
-				newZipFile = zipInfoCollector.newZipFile(pin.getFileName());
+				newZipFile = zipInfoCollector.newZipFile(pin);
+				zipInfoCollector = zipInfoCollector.resolve(pin);
 			}
 			if (newZipFile != null) {
 				newZipFile.newEntry(nextEntry);
@@ -283,21 +333,64 @@ public class BulkInsert {
 				ByteArrayInputStream bin = new ByteArrayInputStream(bout.toByteArray());
 				Path nameAsPath = Paths.get(nextEntry.getName());
 				Path namedElement = pin.resolve(nameAsPath);
-				long count = tryWritingSingleZipFileToGit(zipInfoCollector.resolve(nameAsPath.getParent()),
-						namedElement, new ZipInputStream(bin)).peek(res::add).count();
-				if (count == 0) {
-					res.add(Tuple.of( //
-							namedElement, oi.get().insert(Constants.OBJ_BLOB, bout.toByteArray())//
+				ZipInputStream possibleInnerZipInputStream = new ZipInputStream(bin);
+				ZipEntry possibleFirstElement = possibleInnerZipInputStream.getNextEntry();
+				if (maybeAZip(nameAsPath) && possibleFirstElement != null) {
+					futures.add(singleZipFileToGit( //
+							zipInfoCollector, //
+							namedElement, //
+							possibleInnerZipInputStream, //
+							possibleFirstElement//
 					));
+				} else {
+					futures.add(CompletableFuture.supplyAsync(() -> {
+						try {
+							return Stream.of(Tuple.of(//
+									namedElement, //
+									oi.get().insert(Constants.OBJ_BLOB, bout.toByteArray())//
+							));
+						} catch (IOException e) {
+							throw new RuntimeException(e);
+						}
+
+					}));
 				}
 			}
 			entryProcessed = true;
 			nextEntry = zin.getNextEntry();
 		}
-		if (entryProcessed && zipInfoCollector != null) {
-			newZipFile = null;
+		if (futures.isEmpty()) {
+			return CompletableFuture.completedFuture(Stream.empty());
+		} else {
+			CompletableFuture<Stream<Tuple2<Path, ObjectId>>> retFuture = new CompletableFuture<Stream<Tuple2<Path, ObjectId>>>();
+			CompletableFuture<Stream<Tuple2<Path, ObjectId>>>[] allFutures = futures.toArray(new CompletableFuture[0]);
+			CompletableFuture.allOf(allFutures).thenRunAsync(() -> {
+				try {
+					retFuture.complete(//
+							Arrays.stream(allFutures)//
+									.flatMap(BulkInsert::getResultWithoutCheckedExceptions)//
+					);
+				} catch (Throwable th) {
+					retFuture.completeExceptionally(th);
+				}
+			}, poolForUnlimitedAmountOfJoins);
+			return retFuture;
 		}
-		return res.stream();
+	}
+
+	private boolean maybeAZip(Path nameAsPath) {
+		return additionalFilenameZipPredicate.test(nameAsPath.getFileName().toString());
+	}
+
+	private static <T> T getResultWithoutCheckedExceptions(Future<T> fut) {
+		try {
+			return fut.get();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RuntimeException(e);
+		} catch (ExecutionException e) {
+			throw new RuntimeException(e);
+		}
 	}
 
 	private static ByteArrayOutputStream copyToByteArrayOutput(InputStream in) throws IOException {

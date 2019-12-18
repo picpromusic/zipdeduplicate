@@ -1,31 +1,28 @@
 package jardeduplicate;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
+import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Stack;
-import java.util.TreeMap;
-import java.util.zip.ZipEntry;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 import org.eclipse.jgit.lib.ObjectId;
 
 public class DefaultZipInfoCollector implements ZipInfoCollector {
 
 	private String dataContainer;
-	private List<String[]> allZipPathes;
+	private List<String> allZipPathes;
 	private Optional<DefaultZipInfoCollector> basis;
 	private Path path;
+	private static Charset UTF8 = Charset.forName("UTF-8");
 
 	public DefaultZipInfoCollector() {
 		this.allZipPathes = Collections.synchronizedList(new ArrayList<>());
-		this.path = Paths.get(".");
+		this.path = Paths.get("");
 		this.basis = Optional.empty();
 	}
 
@@ -37,11 +34,11 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 	@Override
 	public ZipInfo newZipFile(Path name) {
 		// Do not use map / orElseGet combination as in WithTimingZipInfoCollector.
-		// Because ((DefaultZipInfoCollector)basis).newZipFile will also return null 
+		// Because ((DefaultZipInfoCollector)basis).newZipFile will also return null
 		if (basis.isPresent()) {
-			return basis.map(b -> b.newZipFile(path.resolve(name))).orElse(null);
+			return basis.get().newZipFile(name);
 		} else {
-			this.allZipPathes.add(StringDeduplicationHelper.splitPath(path.toString()));
+			this.allZipPathes.add(name.toString().replaceAll("\\\\", "/"));
 			return null;
 		}
 	}
@@ -49,16 +46,16 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 	@Override
 	public byte[] dumpInfo() {
 		return this.basis.map(ZipInfoCollector::dumpInfo).orElseGet(() -> {
-			try {
-				ByteArrayOutputStream bout = new ByteArrayOutputStream(64 * 1024 * 128);
-				ObjectOutputStream oo = new ObjectOutputStream(bout);
-				oo.writeObject(dataContainer);
-				oo.writeObject(new ArrayList<>(allZipPathes));
-				oo.close();
-				return bout.toByteArray();
-			} catch (IOException e) {
-				throw new RuntimeException(e);
+			StringBuilder sb = new StringBuilder();
+			sb.append(dataContainer);
+			sb.append("\n");
+			SortedSet<String> allSortedPathes = new TreeSet<>();
+			allSortedPathes.addAll(allZipPathes);
+			for (String strings : allSortedPathes) {
+				sb.append(strings);
+				sb.append("\n");
 			}
+			return sb.toString().getBytes(UTF8);
 		});
 	}
 
@@ -73,7 +70,10 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 		if (name == null) {
 			return this;
 		}
-		return new DefaultZipInfoCollector(basis.orElse(this), this.path.resolve(name));
+		return new DefaultZipInfoCollector(basis.orElse(this), name);
 	}
 
+	List<String> getAllZipPathes() {
+		return allZipPathes;
+	}
 }

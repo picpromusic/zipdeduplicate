@@ -1,9 +1,7 @@
 package jardeduplicate;
 
-import java.io.UnsupportedEncodingException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.zip.ZipEntry;
 
 import org.eclipse.jgit.lib.ObjectId;
 
