@@ -7,7 +7,7 @@ import org.eclipse.jgit.lib.ProgressMonitor;
 
 public class PrintingProgressMonitor implements ProgressMonitor {
 
-	public PrintingProgressMonitor(PrintStream out) {
+	public PrintingProgressMonitor() {
 	}
 
 	private int counter = 0;

@@ -1,10 +1,8 @@
 package jardeduplicate;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,16 +38,22 @@ import io.vavr.Tuple2;
 public class Restore {
 
 	private Repository repo;
+	private String branchName;
 
 	public static void main(String[] args) throws IOException, ClassNotFoundException {
-		Path workPath = Paths.get("demoGit");
+		Path workPath = Paths.get(args[0]);
 		Git git;
 		git = Git.open(workPath.toFile());
 
 		Path path = Paths.get("./restore");
 
-		new Restore(git.getRepository()).restoreTo(path);
+		new Restore(git.getRepository()).setBranch(args[1]).restoreTo(path);
 
+	}
+
+	private Restore setBranch(String string) {
+		this.branchName = string;
+		return this;
 	}
 
 	public Restore(Repository repository) {
@@ -58,7 +62,7 @@ public class Restore {
 
 	public void restoreTo(Path path) throws IOException, ClassNotFoundException {
 		long start = System.currentTimeMillis();
-		ObjectId commitId = repo.getRefDatabase().findRef("master").getObjectId();
+		ObjectId commitId = repo.getRefDatabase().findRef(branchName).getObjectId();
 		ObjectReader or = repo.newObjectReader();
 		RevCommit commit = Commit.parse(or.open(commitId).getBytes());
 
@@ -66,20 +70,8 @@ public class Restore {
 		TreeMap<String, Tuple2<ZipOutputStream, ByteArrayOutputStream>> allOpenZipOutputstreams = new TreeMap<>();
 		ObjectId contentCommitId = null;
 
-		TreeWalk walk = new TreeWalk(repo);
-		walk.addTree(commit.getTree());
-		while (walk.next()) {
-			if (walk.getPathString().equals("description")) {
-				BufferedReader bufr = new BufferedReader(
-						new InputStreamReader(or.open(walk.getObjectId(0)).openStream()));
-				contentCommitId = ObjectId.fromString(bufr.readLine());
-				String content = bufr.readLine();
-				while (content != null) {
-					allZipPathes.put(content, new TreeSet<Tuple2<String, ObjectId>>(onlyStringCompare()));
-					content = bufr.readLine();
-				}
-			}
-		}
+		TreeWalk walk;
+		contentCommitId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
 //		allZipPathes.keySet().forEach(System.out::println);
 
 		commit = Commit.parse(or.open(contentCommitId).getBytes());
@@ -112,7 +104,7 @@ public class Restore {
 						ByteArrayOutputStream bout = null;
 						Path p = Paths.get(destZipContainer);
 						if (p.getParent() == null) {
-							zipOutputStream = new ZipOutputStream(new FileOutputStream(destZipContainer));
+							zipOutputStream = new ZipOutputStream(Files.newOutputStream(path.resolve(destZipContainer)));
 						} else {
 							bout = new ByteArrayOutputStream();
 							zipOutputStream = new ZipOutputStream(bout);
@@ -145,7 +137,7 @@ public class Restore {
 //			allOpenZipOutputstreams.remove(lastEntry.getKey());
 //		}
 
-//		System.out.println(System.currentTimeMillis() - start);
+		System.out.println(System.currentTimeMillis() - start);
 	}
 
 	private void closeAllDone(String lastPathString, String pathString, NavigableSet<String> navigableKeySet,
@@ -193,10 +185,6 @@ public class Restore {
 				}
 			}
 		}
-	}
-
-	private Comparator<? super Tuple2<String, ObjectId>> onlyStringCompare() {
-		return (t1, t2) -> t1._1.compareTo(t2._1);
 	}
 
 	private List<String> searchZipContainer(String pathString, NavigableSet<String> navigableSet) {

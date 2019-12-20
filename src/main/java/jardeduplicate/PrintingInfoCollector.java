@@ -41,4 +41,10 @@ public class PrintingInfoCollector implements ZipInfoCollector {
 		return new PrintingInfoCollector(path.resolve(path));
 	}
 
+	@Override
+	public void prefix(String string) {
+		// TODO Auto-generated method stub
+		
+	}
+
 }

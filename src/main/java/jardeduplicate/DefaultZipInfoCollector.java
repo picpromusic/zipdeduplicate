@@ -18,6 +18,7 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 	private List<String> allZipPathes;
 	private Optional<DefaultZipInfoCollector> basis;
 	private Path path;
+	private String prefix;
 	private static Charset UTF8 = Charset.forName("UTF-8");
 
 	public DefaultZipInfoCollector() {
@@ -52,6 +53,9 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 			SortedSet<String> allSortedPathes = new TreeSet<>();
 			allSortedPathes.addAll(allZipPathes);
 			for (String strings : allSortedPathes) {
+				if (prefix != null) {
+					sb.append(prefix);
+				}
 				sb.append(strings);
 				sb.append("\n");
 			}
@@ -75,5 +79,10 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 
 	List<String> getAllZipPathes() {
 		return allZipPathes;
+	}
+
+	@Override
+	public void prefix(String prefix) {
+		this.prefix = prefix;
 	}
 }

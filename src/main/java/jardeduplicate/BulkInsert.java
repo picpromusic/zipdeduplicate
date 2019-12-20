@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -38,22 +39,35 @@ import java.util.zip.ZipInputStream;
 import org.bouncycastle.util.io.Streams;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.api.errors.InvalidRemoteException;
+import org.eclipse.jgit.api.errors.NoHeadException;
+import org.eclipse.jgit.api.errors.TransportException;
+import org.eclipse.jgit.errors.CorruptObjectException;
+import org.eclipse.jgit.errors.IncorrectObjectTypeException;
+import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
+import org.eclipse.jgit.transport.FetchResult;
+import org.eclipse.jgit.transport.PushResult;
+import org.eclipse.jgit.transport.RefSpec;
 import org.ietf.jgss.Oid;
 
 import com.jcraft.jzlib.ZInputStream;
 
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.TreeFormatter;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.DepthWalk.Commit;
 
 import io.vavr.Tuple;
 import io.vavr.Tuple2;
@@ -80,7 +94,11 @@ public class BulkInsert {
 	}
 
 	public static void main(String[] args) throws GitAPIException, IOException {
-		Path workPath = Paths.get("demoGit");
+		Path pathToInput = Paths.get(args[1]);
+
+		String branchName = args[2];
+
+		Path workPath = Paths.get(args[0]);
 		Git git;
 		if (!Files.exists(workPath)) {
 			git = Git.init().setDirectory(workPath.toFile()).setBare(true).call();
@@ -95,29 +113,96 @@ public class BulkInsert {
 		ZipInfoCollector zipInfoCollector = new DefaultZipInfoCollector();
 
 		ObjectId treeId = new BulkInsert(git.getRepository(), onlyThisExtensions(extensions))//
-				.doIt(Paths.get(args[0]), zipInfoCollector);
+				.doIt(pathToInput, zipInfoCollector);
+
+		ObjectId commitId = fetchAndFindCommitWithTreeId(branchName, git, treeId);
 
 		PersonIdent person = new PersonIdent("test", "test@zipdeduplicate.incubator");
-		Tuple2<Result, ObjectId> result = insertCommitOnBranch(git.getRepository(), treeId, "data", person);
-		System.out.println((System.currentTimeMillis() - startTime) + " ms. UpdateRefResult:" + result._1
-				+ " commit-id:" + result._2);
+		if (commitId == null) {
+			Tuple2<Result, ObjectId> result = insertCommitOnBranch(git.getRepository(), treeId, "data", person);
+			System.out.println((System.currentTimeMillis() - startTime) + " ms. UpdateRefResult:" + result._1
+					+ " commit-id:" + result._2);
+			commitId = result._2;
+		}
 
-		zipInfoCollector.linkDataContainer(result._2);
+		zipInfoCollector.linkDataContainer(commitId);
+
+		byte[] rawDescriptionDataInLastCommit = getRawDescriptionDataInLastCommit(branchName, git);
 
 		byte[] dumpInfo = zipInfoCollector.dumpInfo();
 		System.out.println(dumpInfo.length + " bytes");
-		ObjectInserter oi = git.getRepository().newObjectInserter();
-		ObjectId id = oi.insert(Constants.OBJ_BLOB, dumpInfo);
-		TreeFormatter treeFormatter = new TreeFormatter(1);
-		treeFormatter.append("description", FileMode.REGULAR_FILE, id);
-		id = oi.insert(treeFormatter);
-		result = insertCommitOnBranch(git.getRepository(), id, "master", person);
 
-//		git.gc()//
-////		.setAggressive(true)//
-////		.setPreserveOldPacks(true)
-//		.setPrunePreserved(false)
-//				.setProgressMonitor(progressMonitor(System.out)).call();
+		if (!Arrays.equals(dumpInfo, rawDescriptionDataInLastCommit)) {
+			ObjectInserter oi = git.getRepository().newObjectInserter();
+			ObjectId id = oi.insert(Constants.OBJ_BLOB, dumpInfo);
+			TreeFormatter treeFormatter = new TreeFormatter(1);
+			treeFormatter.append("description", FileMode.REGULAR_FILE, id);
+			id = oi.insert(treeFormatter);
+			insertCommitOnBranch(git.getRepository(), id, branchName, person);
+		}
+
+		Iterable<PushResult> call = git.push()
+				.setProgressMonitor(new PrintingProgressMonitor())
+				.setPushAll().call();
+		call.forEach(pr -> {
+			pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
+			Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
+		});
+		git.close();
+
+	}
+
+	private static byte[] getRawDescriptionDataInLastCommit(String branchName, Git git) {
+		try {
+			Ref findRef = git.getRepository().getRefDatabase().findRef("refs/heads/" + branchName);
+			if (findRef == null) {
+				return null;
+			}
+			ObjectId objectId = findRef.getObjectId();
+			RevCommit commit = Commit
+					.parse(git.getRepository().newObjectReader().newReader().open(objectId).getBytes());
+			byte[] rawDescriptionDataInLastCommit = DescriptionUtil.extractDesciptionRawData(git.getRepository(),
+					commit);
+			return rawDescriptionDataInLastCommit;
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	private static ObjectId fetchAndFindCommitWithTreeId(String branchName, Git git, ObjectId treeId) {
+		try {
+			FetchResult fetchResult = git.fetch().setRemote("origin")
+					.setRefSpecs(new RefSpec("refs/heads/data:refs/heads/data"),
+							new RefSpec("refs/heads/" + branchName + ":refs/heads/" + branchName))
+					.setProgressMonitor(new PrintingProgressMonitor()).setForceUpdate(true).call();
+//			System.out.println(fetchResult.getMessages());
+//			fetchResult.getAdvertisedRefs().forEach(System.out::println);
+//			fetchResult.getTrackingRefUpdates().forEach(System.out::println);
+
+			RefDatabase refDatabase = git.getRepository().getRefDatabase();
+//			refDatabase.getRefs().forEach(System.out::println);
+
+//			RefUpdate newUpdate = refDatabase.newUpdate("refs/heads/data", false);
+//			newUpdate.setNewObjectId(refDatabase.findRef("refs/remotes/origin/data").getObjectId());
+//			newUpdate.setForceUpdate(true);
+//			Result update = newUpdate.update();
+
+			Ref findRef = refDatabase.findRef("refs/heads/data");
+
+			ObjectId objectId = findRef.getObjectId();
+			Iterator<RevCommit> commitIter = git.log().add(objectId).call().iterator();
+			ObjectId commitId = null;
+			while (commitIter.hasNext() && commitId == null) {
+				RevCommit next = commitIter.next();
+				ObjectId id = next.getTree().getId();
+				if (treeId.equals(id)) {
+					commitId = next.getId();
+				}
+			}
+			return commitId;
+		} catch (GitAPIException | IOException e) {
+			return null;
+		}
 	}
 
 	public static Predicate<String> onlyThisExtensions(List<String> extensions) {
@@ -125,10 +210,6 @@ public class BulkInsert {
 			String sl = s.toLowerCase();
 			return extensions.stream().anyMatch(e -> sl.endsWith(e));
 		};
-	}
-
-	private static ProgressMonitor progressMonitor(PrintStream out) {
-		return new PrintingProgressMonitor(out);
 	}
 
 	public ObjectId doIt(Path pathToAnalyse, ZipInfoCollector zipInfoCollector) throws IOException, GitAPIException {
@@ -216,6 +297,13 @@ public class BulkInsert {
 		}
 
 		SortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
+		if (Files.isDirectory(pathToAnalyse)) {
+			rootElements = new TreeMap<String, Either<ObjectId, SortingTreeFormatter>>();
+			rootElements.put(pathToAnalyse.getFileName().toString() + ".zip/", Either.right(rootFormatter));
+			rootFormatter = buildTree(Paths.get(""), rootElements);
+			zipInfoCollector.prefix(pathToAnalyse.getFileName().toString() + ".zip/");
+			zipInfoCollector.newZipFile(Paths.get(""));
+		}
 		ObjectId rootDirId = rootFormatter.insert(oi.get());
 
 		return rootDirId;

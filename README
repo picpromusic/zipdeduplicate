@@ -1,0 +1,9 @@
+git init --bare zipdedup.remote.git
+git clone --bare zipdedup.remote.git/ zipdedup.local.git
+git clone --bare zipdedup.remote.git/ zipdedup.local2.git
+git clone zipdedup.remote.git/ zipdedup.setup.git
+cd zipdedup.setup.git
+echo "SETUP" > README
+git add README
+git commit -m "setup"
+git push

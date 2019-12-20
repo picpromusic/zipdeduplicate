@@ -13,4 +13,6 @@ public interface ZipInfoCollector {
 	byte[] dumpInfo();
 
 	void linkDataContainer(ObjectId commitId);
+
+	void prefix(String string);
 }

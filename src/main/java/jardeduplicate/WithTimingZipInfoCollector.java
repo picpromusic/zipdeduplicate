@@ -19,6 +19,7 @@ public class WithTimingZipInfoCollector implements ZipInfoCollector {
 	private Map<Path, ZipInfo> allZipInfos;
 	private Optional<WithTimingZipInfoCollector> basis;
 	private Path path;
+	private String prefix;
 
 	public WithTimingZipInfoCollector() {
 		path = Paths.get(".");
@@ -47,6 +48,9 @@ public class WithTimingZipInfoCollector implements ZipInfoCollector {
 	public byte[] dumpInfo() {
 		return basis.map(ZipInfoCollector::dumpInfo).orElseGet(() -> {
 			try {
+				if (prefix != null) {
+					// TODO 
+				}
 				ByteArrayOutputStream bout = new ByteArrayOutputStream(64 * 1024 * 128);
 				ObjectOutputStream oo = new ObjectOutputStream(bout);
 				oo.writeObject(dataContainer);
@@ -71,5 +75,10 @@ public class WithTimingZipInfoCollector implements ZipInfoCollector {
 			return this;
 		}
 		return new WithTimingZipInfoCollector(basis.orElse(this), path.resolve(name));
+	}
+
+	@Override
+	public void prefix(String prefix) {
+this.prefix = prefix;		
 	}
 }
