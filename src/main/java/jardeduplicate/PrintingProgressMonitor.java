@@ -1,6 +1,5 @@
 package jardeduplicate;
 
-import java.io.PrintStream;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jgit.lib.ProgressMonitor;

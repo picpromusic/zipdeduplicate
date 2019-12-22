@@ -17,6 +17,7 @@ public class FolderRestore extends TwoLevelRestore {
 		new FolderRestore(git.getRepository(), args[1]).restoreTo(path);
 	}
 
+	@Override
 	protected ContainerOutputStream createOuterMostContainer(Path path, String dest) {
 		return new FolderContainerOutputStream(path.resolve(dest));
 	}

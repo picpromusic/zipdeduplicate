@@ -1,6 +1,5 @@
 package jardeduplicate;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -8,9 +7,6 @@ import java.nio.file.Paths;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
-
-import io.vavr.Tuple;
-import io.vavr.Tuple2;
 
 public class ZipRestore extends TwoLevelRestore {
 
