@@ -299,9 +299,9 @@ public class BulkInsert {
 		SortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
 		if (Files.isDirectory(pathToAnalyse)) {
 			rootElements = new TreeMap<String, Either<ObjectId, SortingTreeFormatter>>();
-			rootElements.put(pathToAnalyse.getFileName().toString() + ".zip/", Either.right(rootFormatter));
+			rootElements.put(pathToAnalyse.getFileName().toString() + "/", Either.right(rootFormatter));
 			rootFormatter = buildTree(Paths.get(""), rootElements);
-			zipInfoCollector.prefix(pathToAnalyse.getFileName().toString() + ".zip/");
+			zipInfoCollector.prefix(pathToAnalyse.getFileName().toString() + "/");
 			zipInfoCollector.newZipFile(Paths.get(""));
 		}
 		ObjectId rootDirId = rootFormatter.insert(oi.get());
