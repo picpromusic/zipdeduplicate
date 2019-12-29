@@ -43,7 +43,7 @@ public class TestBulkImport extends AbstractGitTest {
 			System.out.println(tmpDir);
 		}
 		git = Git.init().setBare(true).setDirectory(tmpDirGit.toFile()).call();
-		bulkInsert = new BulkInsert(git.getRepository(), BulkInsert.onlyThisExtensions(Arrays.asList(".zip")));
+		bulkInsert = new BulkInsert(git, BulkInsert.onlyThisExtensions(Arrays.asList(".zip")));
 		zipInfo = new DefaultZipInfoCollector();
 	}
 

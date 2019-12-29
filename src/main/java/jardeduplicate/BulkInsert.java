@@ -31,6 +31,7 @@ import java.util.zip.ZipInputStream;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.lib.AnyObjectId;
 import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.FileMode;
@@ -49,101 +50,110 @@ import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 
-import io.vavr.Tuple;
-import io.vavr.Tuple2;
-import io.vavr.control.Either;
-
 public class BulkInsert {
 
+	private static final String ORIGIN = "origin";
+	private static final String REFS_DATA_PREFIX = "refs/heads/data_";
+	private static final String REFS_DESC_PREFIX = "refs/heads/desc_";
 	private static final Integer NO_PARENT = 0;
 	private static final Integer WITH_PARENT = 1;
 
 	private Repository repo;
-	private ThreadLocal<ObjectInserter> oi = ThreadLocal.withInitial(() -> repo.newObjectInserter());
+	private ThreadLocal<ObjectInserter> oneObjectInserterPerThread = ThreadLocal
+			.withInitial(() -> repo.newObjectInserter());
 	private ExecutorService poolForUnlimitedAmountOfJoins;
 	private Predicate<String> additionalFilenameZipPredicate;
+	private Git git;
 
-	public BulkInsert(Repository repo) {
-		this(repo, (s) -> true);
+	public BulkInsert(Git git) {
+		this(git, (s) -> true);
 	}
 
-	public BulkInsert(Repository repo, Predicate<String> additionalFilenameZipPredicate) {
-		this.repo = repo;
+	public BulkInsert(Git git, Predicate<String> additionalFilenameZipPredicate) {
+		this.git = git;
+		this.repo = git.getRepository();
 		this.additionalFilenameZipPredicate = additionalFilenameZipPredicate;
-		this.poolForUnlimitedAmountOfJoins = Executors.newCachedThreadPool();
+		this.poolForUnlimitedAmountOfJoins = Executors.newCachedThreadPool(BulkInsert::deamonThreads);
+	}
+
+	private static Thread deamonThreads(Runnable r) {
+		Thread t = new Thread(r);
+		t.setDaemon(true);
+		return t;
 	}
 
 	public static void main(String[] args) throws GitAPIException, IOException {
 		Path pathToInput = Paths.get(args[1]);
-
 		String branchName = args[2];
-
 		Path workPath = Paths.get(args[0]);
+
+		try (Git git = openOrCreateGit(workPath)) {
+			List<String> extensions = Arrays.asList(".jar", ".war", ".ear", ".zip");
+
+			ZipInfoCollector zipInfoCollector = new DefaultZipInfoCollector();
+
+			PersonIdent person = new PersonIdent("test", "test@zipdeduplicate.incubator");
+
+			BulkInsert bInsert = new BulkInsert(git, onlyThisExtensions(extensions));
+			ObjectId treeId = bInsert.doIt(pathToInput, zipInfoCollector);
+			ObjectId commitId = bInsert.createOrFindCommit(branchName, person, treeId);
+			zipInfoCollector.linkDataContainer(commitId);
+
+			bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person);
+
+			Iterable<PushResult> call = git.push().setProgressMonitor(new PrintingProgressMonitor()).setPushAll()
+					.call();
+			call.forEach(pr -> {
+				pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
+				Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
+			});
+		}
+
+	}
+
+	private void ensureDescriptionCommitOnHeadOfBranch(String branchName, ZipInfoCollector zipInfoCollector,
+			PersonIdent person) throws IOException, GitAPIException {
+		byte[] rawDescriptionDataInLastCommit = getRawDescriptionDataInLastCommit(branchName);
+		byte[] dumpInfo = zipInfoCollector.dumpInfo();
+
+		if (!Arrays.equals(dumpInfo, rawDescriptionDataInLastCommit)) {
+			ObjectInserter oi = repo.newObjectInserter();
+			ObjectId treeId = oi.insert(Constants.OBJ_BLOB, dumpInfo);
+			TreeFormatter treeFormatter = new TreeFormatter(1);
+			treeFormatter.append("description", FileMode.REGULAR_FILE, treeId);
+			treeId = oi.insert(treeFormatter);
+			insertCommitOnBranch(treeId, REFS_DESC_PREFIX + branchName, person);
+		}
+	}
+
+	private ObjectId createOrFindCommit(String branchName, PersonIdent person, ObjectId treeId)
+			throws IOException, GitAPIException {
+		ObjectId commitId = fetchAndFindCommitWithTreeId(branchName, git, treeId);
+		if (commitId == null) {
+			commitId = insertCommitOnBranch(treeId, REFS_DATA_PREFIX + branchName, person);
+		}
+		return commitId;
+	}
+
+	private static Git openOrCreateGit(Path workPath) throws GitAPIException, IOException {
 		Git git;
 		if (!Files.exists(workPath)) {
 			git = Git.init().setDirectory(workPath.toFile()).setBare(true).call();
 		} else {
 			git = Git.open(workPath.toFile());
 		}
-
-		List<String> extensions = Arrays.asList(".jar", ".war", ".ear", ".zip");
-
-		long startTime = System.currentTimeMillis();
-//		ZipInfoCollector zipInfoCollector = new BaseZipInfoCollector();
-		ZipInfoCollector zipInfoCollector = new DefaultZipInfoCollector();
-
-		ObjectId treeId = new BulkInsert(git.getRepository(), onlyThisExtensions(extensions))//
-				.doIt(pathToInput, zipInfoCollector);
-
-		ObjectId commitId = fetchAndFindCommitWithTreeId(branchName, git, treeId);
-
-		PersonIdent person = new PersonIdent("test", "test@zipdeduplicate.incubator");
-		if (commitId == null) {
-			Tuple2<Result, ObjectId> result = insertCommitOnBranch(git.getRepository(), treeId, "data", person);
-			System.out.println((System.currentTimeMillis() - startTime) + " ms. UpdateRefResult:" + result._1
-					+ " commit-id:" + result._2);
-			commitId = result._2;
-		}
-
-		zipInfoCollector.linkDataContainer(commitId);
-
-		byte[] rawDescriptionDataInLastCommit = getRawDescriptionDataInLastCommit(branchName, git);
-
-		byte[] dumpInfo = zipInfoCollector.dumpInfo();
-		System.out.println(dumpInfo.length + " bytes");
-
-		if (!Arrays.equals(dumpInfo, rawDescriptionDataInLastCommit)) {
-			ObjectInserter oi = git.getRepository().newObjectInserter();
-			ObjectId id = oi.insert(Constants.OBJ_BLOB, dumpInfo);
-			TreeFormatter treeFormatter = new TreeFormatter(1);
-			treeFormatter.append("description", FileMode.REGULAR_FILE, id);
-			id = oi.insert(treeFormatter);
-			insertCommitOnBranch(git.getRepository(), id, branchName, person);
-		}
-
-		Iterable<PushResult> call = git.push()
-				.setProgressMonitor(new PrintingProgressMonitor())
-				.setPushAll().call();
-		call.forEach(pr -> {
-			pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
-			Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
-		});
-		git.close();
-
+		return git;
 	}
 
-	private static byte[] getRawDescriptionDataInLastCommit(String branchName, Git git) {
+	private byte[] getRawDescriptionDataInLastCommit(String branchName) {
 		try {
-			Ref findRef = git.getRepository().getRefDatabase().findRef("refs/heads/" + branchName);
+			Ref findRef = git.getRepository().getRefDatabase().findRef(REFS_DESC_PREFIX + branchName);
 			if (findRef == null) {
 				return null;
 			}
 			ObjectId objectId = findRef.getObjectId();
-			RevCommit commit = Commit
-					.parse(git.getRepository().newObjectReader().newReader().open(objectId).getBytes());
-			byte[] rawDescriptionDataInLastCommit = DescriptionUtil.extractDesciptionRawData(git.getRepository(),
-					commit);
-			return rawDescriptionDataInLastCommit;
+			RevCommit commit = Commit.parse(repo.newObjectReader().newReader().open(objectId).getBytes());
+			return DescriptionUtil.extractDesciptionRawData(git.getRepository(), commit);
 		} catch (IOException e) {
 			return null;
 		}
@@ -151,23 +161,16 @@ public class BulkInsert {
 
 	private static ObjectId fetchAndFindCommitWithTreeId(String branchName, Git git, ObjectId treeId) {
 		try {
-			FetchResult fetchResult = git.fetch().setRemote("origin")
-					.setRefSpecs(new RefSpec("refs/heads/data:refs/heads/data"),
-							new RefSpec("refs/heads/" + branchName + ":refs/heads/" + branchName))
+			String dataRef = REFS_DATA_PREFIX + branchName;
+			RefSpec dataRefSpec = new RefSpec(dataRef + ":" + REFS_DATA_PREFIX + branchName);
+			RefSpec descRefSpec = new RefSpec(REFS_DESC_PREFIX + branchName + ":" + REFS_DESC_PREFIX + branchName);
+
+			FetchResult fetchResult = git.fetch().setRemote(ORIGIN).setRefSpecs(dataRefSpec, descRefSpec)
 					.setProgressMonitor(new PrintingProgressMonitor()).setForceUpdate(true).call();
-//			System.out.println(fetchResult.getMessages());
-//			fetchResult.getAdvertisedRefs().forEach(System.out::println);
-//			fetchResult.getTrackingRefUpdates().forEach(System.out::println);
+			System.out.println(fetchResult.getMessages());
 
 			RefDatabase refDatabase = git.getRepository().getRefDatabase();
-//			refDatabase.getRefs().forEach(System.out::println);
-
-//			RefUpdate newUpdate = refDatabase.newUpdate("refs/heads/data", false);
-//			newUpdate.setNewObjectId(refDatabase.findRef("refs/remotes/origin/data").getObjectId());
-//			newUpdate.setForceUpdate(true);
-//			Result update = newUpdate.update();
-
-			Ref findRef = refDatabase.findRef("refs/heads/data");
+			Ref findRef = refDatabase.findRef(dataRef);
 
 			ObjectId objectId = findRef.getObjectId();
 			Iterator<RevCommit> commitIter = git.log().add(objectId).call().iterator();
@@ -194,9 +197,8 @@ public class BulkInsert {
 
 	public ObjectId doIt(Path pathToAnalyse, ZipInfoCollector zipInfoCollector) throws IOException, GitAPIException {
 
-		Map<Path, List<Tuple2<Path, ObjectId>>> allFilesGroupedByPathes;
-		Map<String, Either<ObjectId, SortingTreeFormatter>> rootElements = Collections
-				.synchronizedMap(new TreeMap<>(gitNameComperator()));
+		Map<Path, List<PathWithObjectId>> allFilesGroupedByPathes;
+		Map<String, AnyObjectId> rootElements = Collections.synchronizedMap(new TreeMap<>(gitNameComperator()));
 
 		Stream<Path> filesToInsert;
 		Path root;
@@ -208,7 +210,7 @@ public class BulkInsert {
 			root = pathToAnalyse.getParent();
 		}
 		try (Stream<Path> walk = filesToInsert) {
-			Stream<Tuple2<Path, ObjectId>> filesWithObjectId = walk.collect(Collectors.toList()).stream()//
+			Stream<PathWithObjectId> filesWithObjectId = walk.collect(Collectors.toList()).stream()//
 					.parallel()//
 					.filter(Files::isReadable)//
 					.filter(Files::isRegularFile)//
@@ -217,21 +219,21 @@ public class BulkInsert {
 						return singleFileToGit(zipInfoCollector.resolve(relP.getParent()), p, relP);
 					});
 
-			Map<Integer, List<Tuple2<Path, ObjectId>>> splitted = filesWithObjectId
-					.collect(Collectors.groupingBy(t -> t._1().getParent() == null ? NO_PARENT : WITH_PARENT));
+			Map<Integer, List<PathWithObjectId>> splitted = filesWithObjectId
+					.collect(Collectors.groupingBy(t -> t.p.getParent() == null ? NO_PARENT : WITH_PARENT));
 
 			if (splitted.containsKey(NO_PARENT)) {
 				rootElements.putAll(splitted.get(NO_PARENT).stream()//
 						.collect(Collectors.toMap( //
-								t -> t._1.toString(), //
-								t -> Either.left(t._2)//
+								t -> t.p.toString(), //
+								t -> t.id//
 						)));
 			}
 
 			if (splitted.containsKey(WITH_PARENT)) {
 				allFilesGroupedByPathes = splitted.get(WITH_PARENT).stream()//
 						.collect(Collectors.groupingBy( //
-								t -> t._1.getParent(), //
+								t -> t.p.getParent(), //
 								Collectors.toList())//
 						);
 			} else {
@@ -242,13 +244,12 @@ public class BulkInsert {
 			// Alle Files nach Parent sortieren.
 		}
 
-		Map<Path, Map<String, Either<ObjectId, SortingTreeFormatter>>> filesGroupedByPathAndSortedByName = sortedMapOfPathesByLengthAndName();
+		Map<Path, Map<String, AnyObjectId>> filesGroupedByPathAndSortedByName = sortedMapOfPathesByLengthAndName();
 
-		for (Entry<Path, List<Tuple2<Path, ObjectId>>> entry : allFilesGroupedByPathes.entrySet()) {
-			// Either(ObjectId=File,TreeFormater=Verzeichnis)
-			TreeMap<String, Either<ObjectId, SortingTreeFormatter>> elements = new TreeMap<>(gitNameComperator());
-			for (Tuple2<Path, ObjectId> tup : entry.getValue()) {
-				elements.put(tup._1.getFileName().toString(), Either.left(tup._2));
+		for (Entry<Path, List<PathWithObjectId>> entry : allFilesGroupedByPathes.entrySet()) {
+			TreeMap<String, AnyObjectId> elements = new TreeMap<>(gitNameComperator());
+			for (PathWithObjectId tup : entry.getValue()) {
+				elements.put(tup.p.getFileName().toString(), tup.id);
 			}
 			filesGroupedByPathAndSortedByName.put(entry.getKey(), elements);
 		}
@@ -257,40 +258,38 @@ public class BulkInsert {
 		Set<Path> allPathesContainingFiles = allFilesGroupedByPathes.keySet();
 		allPathesContainingFiles.forEach(p -> {
 			while (p.getParent() != null) {
-				Either<ObjectId, SortingTreeFormatter> prev = //
+				AnyObjectId prev = //
 						filesGroupedByPathAndSortedByName
 								.computeIfAbsent(p.getParent(), o -> new TreeMap<>(gitNameComperator()))
-								.putIfAbsent(p.getFileName().toString() + "/", Either.right(createNewTreeFormatter())//
+								.putIfAbsent(p.getFileName().toString() + "/", createNewTreeFormatter()//
 				);
 				p = p.getParent();
 			}
 		});
 
-		for (Entry<Path, Map<String, Either<ObjectId, SortingTreeFormatter>>> e : filesGroupedByPathAndSortedByName
-				.entrySet()) {
+		for (Entry<Path, Map<String, AnyObjectId>> e : filesGroupedByPathAndSortedByName.entrySet()) {
 			SortingTreeFormatter tf = buildTree(e.getKey(), e.getValue());
-			Map<String, Either<ObjectId, SortingTreeFormatter>> parentTree = Optional.ofNullable(e.getKey().getParent())//
+			Map<String, AnyObjectId> parentTree = Optional.ofNullable(e.getKey().getParent())//
 					.map(filesGroupedByPathAndSortedByName::get)//
 					.orElse(rootElements);
 
-			parentTree.put(e.getKey().getFileName().toString() + "/", Either.right(tf));
+			parentTree.put(e.getKey().getFileName().toString() + "/", tf);
 		}
 
 		SortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
 		if (Files.isDirectory(pathToAnalyse)) {
-			rootElements = new TreeMap<String, Either<ObjectId, SortingTreeFormatter>>();
-			rootElements.put(pathToAnalyse.getFileName().toString() + "/", Either.right(rootFormatter));
+			rootElements = new TreeMap<String, AnyObjectId>();
+			rootElements.put(pathToAnalyse.getFileName().toString() + "/", rootFormatter);
 			rootFormatter = buildTree(Paths.get(""), rootElements);
 			zipInfoCollector.prefix(pathToAnalyse.getFileName().toString() + "/");
 			zipInfoCollector.newZipFile(Paths.get(""));
 		}
-		ObjectId rootDirId = rootFormatter.insert(oi.get());
+		ObjectId rootDirId = rootFormatter.toObjectId();
 
 		return rootDirId;
 	}
 
-	private Stream<? extends Tuple2<Path, ObjectId>> singleFileToGit(ZipInfoCollector zipInfoCollector, Path p,
-			Path relP) {
+	private Stream<PathWithObjectId> singleFileToGit(ZipInfoCollector zipInfoCollector, Path p, Path relP) {
 		try (InputStream inp = Files.newInputStream(p)) {
 			ZipInputStream zin = new ZipInputStream(inp);
 			ZipEntry firstEntry = zin.getNextEntry();
@@ -298,8 +297,8 @@ public class BulkInsert {
 				return singleZipFileToGit(zipInfoCollector, relP, zin, firstEntry).get();
 			} else {
 				try (ByteArrayOutputStream bout = copyToByteArrayOutput(Files.newInputStream(p))) {
-					ObjectId oid = oi.get().insert(Constants.OBJ_BLOB, bout.toByteArray());
-					return Stream.of(Tuple.of(relP, oid));
+					ObjectId oid = oneObjectInserterPerThread.get().insert(Constants.OBJ_BLOB, bout.toByteArray());
+					return Stream.of(new PathWithObjectId(relP, oid));
 				} catch (IOException e) {
 					throw new RuntimeException(e);
 				}
@@ -328,9 +327,8 @@ public class BulkInsert {
 		};
 	}
 
-	private static Tuple2<Result, ObjectId> insertCommitOnBranch(Repository repo, ObjectId treeId, String branchName,
-			PersonIdent authorAndComitter) throws IOException, GitAPIException {
-		String refName = "refs/heads/" + branchName;
+	private ObjectId insertCommitOnBranch(ObjectId treeId, String refName, PersonIdent authorAndComitter)
+			throws IOException {
 		Ref a = repo.getRefDatabase().findRef(refName);
 
 		CommitBuilder cb = new CommitBuilder();
@@ -342,33 +340,32 @@ public class BulkInsert {
 
 		cb.setTreeId(treeId);
 		ObjectId commitId = repo.newObjectInserter().insert(cb);
-		RefUpdate updateRef = repo.updateRef(refName);
 
+		RefUpdate updateRef = repo.updateRef(refName);
 		updateRef.setNewObjectId(commitId);
-		return Tuple.of(updateRef.update(), commitId);
+		Result result = updateRef.update();
+		return commitId;
 	}
 
-	private SortingTreeFormatter buildTree(Path basePath, Map<String, Either<ObjectId, SortingTreeFormatter>> content)
-			throws IOException {
+	private SortingTreeFormatter buildTree(Path basePath, Map<String, AnyObjectId> content) throws IOException {
 		SortingTreeFormatter tf = createNewTreeFormatter();
 
-		for (Entry<String, Either<ObjectId, SortingTreeFormatter>> e2 : content.entrySet()) {
-			Either<ObjectId, SortingTreeFormatter> fileOrTree = e2.getValue();
+		for (Entry<String, AnyObjectId> e2 : content.entrySet()) {
+			AnyObjectId fileOrTree = e2.getValue();
+			ObjectId oid = fileOrTree.toObjectId();
 			String name = e2.getKey();
-			if (fileOrTree.isLeft()) {
-				Path path = basePath.resolve(name);
-				tf.append(name, FileMode.REGULAR_FILE, fileOrTree.getLeft());
-			} else {
+			FileMode fm = FileMode.REGULAR_FILE;
+			if (fileOrTree instanceof SortingTreeFormatter) {
 				name = name.substring(0, name.length() - 1);
-				Path path = basePath.resolve(name);
-				tf.append(name, FileMode.TREE, fileOrTree.get().insert(oi.get()));
+				fm = FileMode.TREE;
 			}
+			tf.append(name, fm, oid);
 		}
 		return tf;
 	}
 
 	private SortingTreeFormatter createNewTreeFormatter() {
-		return new SortingTreeFormatter();
+		return new SortingTreeFormatter(oneObjectInserterPerThread::get);
 	}
 
 	private static <V> Map<Path, V> sortedMapOfPathesByLengthAndName() {
@@ -382,10 +379,10 @@ public class BulkInsert {
 		});
 	}
 
-	private Future<Stream<Tuple2<Path, ObjectId>>> singleZipFileToGit(ZipInfoCollector zipInfoCollector, Path pin,
+	private Future<Stream<PathWithObjectId>> singleZipFileToGit(ZipInfoCollector zipInfoCollector, Path pin,
 			ZipInputStream zin, ZipEntry firstEntry) throws IOException {
 		boolean entryProcessed = false;
-		List<Future<Stream<Tuple2<Path, ObjectId>>>> futures = new ArrayList<>();
+		List<Future<Stream<PathWithObjectId>>> futures = new ArrayList<>();
 		ZipEntry nextEntry = firstEntry;
 		ZipInfo newZipFile = null;
 		while (nextEntry != null) {
@@ -413,9 +410,9 @@ public class BulkInsert {
 				} else {
 					futures.add(CompletableFuture.supplyAsync(() -> {
 						try {
-							return Stream.of(Tuple.of(//
+							return Stream.of(new PathWithObjectId(//
 									namedElement, //
-									oi.get().insert(Constants.OBJ_BLOB, bout.toByteArray())//
+									oneObjectInserterPerThread.get().insert(Constants.OBJ_BLOB, bout.toByteArray())//
 							));
 						} catch (IOException e) {
 							throw new RuntimeException(e);
@@ -430,8 +427,8 @@ public class BulkInsert {
 		if (futures.isEmpty()) {
 			return CompletableFuture.completedFuture(Stream.empty());
 		} else {
-			CompletableFuture<Stream<Tuple2<Path, ObjectId>>> retFuture = new CompletableFuture<Stream<Tuple2<Path, ObjectId>>>();
-			CompletableFuture<Stream<Tuple2<Path, ObjectId>>>[] allFutures = futures.toArray(new CompletableFuture[0]);
+			CompletableFuture<Stream<PathWithObjectId>> retFuture = new CompletableFuture<Stream<PathWithObjectId>>();
+			CompletableFuture<Stream<PathWithObjectId>>[] allFutures = futures.toArray(new CompletableFuture[0]);
 			CompletableFuture.allOf(allFutures).thenRunAsync(() -> {
 				try {
 					retFuture.complete(//
@@ -470,6 +467,17 @@ public class BulkInsert {
 			read = in.read(buf);
 		}
 		return bout;
+	}
+
+	private static class PathWithObjectId {
+		private final Path p;
+		private final ObjectId id;
+
+		private PathWithObjectId(Path p, ObjectId id) {
+			this.p = p;
+			this.id = id;
+		}
+
 	}
 
 }
