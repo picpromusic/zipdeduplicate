@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.io.IOException;
 import java.nio.file.Path;

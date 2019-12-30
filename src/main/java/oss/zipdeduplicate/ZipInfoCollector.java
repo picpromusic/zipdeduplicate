@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.nio.file.Path;
 
@@ -6,9 +6,7 @@ import org.eclipse.jgit.lib.ObjectId;
 
 public interface ZipInfoCollector {
 	
-	ZipInfoCollector resolve(Path path);
-	
-	ZipInfo newZipFile(Path name);
+	void newZipFile(Path name);
 
 	byte[] dumpInfo();
 

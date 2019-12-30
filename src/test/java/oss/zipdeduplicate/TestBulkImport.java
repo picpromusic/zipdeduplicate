@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -21,6 +21,9 @@ import org.eclipse.jgit.treewalk.TreeWalk;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import oss.zipdeduplicate.BulkInsert;
+import oss.zipdeduplicate.DefaultZipInfoCollector;
 
 public class TestBulkImport extends AbstractGitTest {
 

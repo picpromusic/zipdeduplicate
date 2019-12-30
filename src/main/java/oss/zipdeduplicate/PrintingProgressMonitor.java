@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.util.concurrent.TimeUnit;
 

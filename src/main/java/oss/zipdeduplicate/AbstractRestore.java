@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -22,15 +22,15 @@ import org.eclipse.jgit.revwalk.DepthWalk.Commit;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
-import io.vavr.Tuple2;
+import oss.zipdeduplicate.DescriptionUtil.PathAsStringAndObjectId;
 
 public abstract class AbstractRestore {
 
 	private Repository repo;
 	private String branchName;
 	private ObjectReader reader;
-	private TreeMap<String, TreeSet<Tuple2<String, ObjectId>>> allZipPathes;
-	private TreeMap<String, Tuple2<ContainerOutputStream, ByteArrayOutputStream>> allOpenOutputstreams;
+	private TreeMap<String, TreeSet<PathAsStringAndObjectId>> allZipPathes;
+	private TreeMap<String, ContainerOutputStream> allOpenOutputstreams;
 
 	public AbstractRestore(Repository repository, String branch) {
 		this.repo = repository;
@@ -91,9 +91,9 @@ public abstract class AbstractRestore {
 			while (listIterator.hasPrevious()) {
 				String destZipContainer = listIterator.previous();
 				Path actPath = Paths.get(destZipContainer);
-				outputStream = (ContainerOutputStream) allOpenOutputstreams
+				outputStream = allOpenOutputstreams
 						.computeIfAbsent(destZipContainer, k -> openStreams(path, k))//
-						._1();
+						;
 
 				outerZipPath = actPath;
 			}
@@ -119,17 +119,19 @@ public abstract class AbstractRestore {
 				String lastName = null;
 				while (closeIterator.nextIndex() <= stopIndex && closeIterator.hasNext()) {
 					String name = closeIterator.next();
-					Tuple2<ContainerOutputStream, ByteArrayOutputStream> streams = allOpenOutputstreams.get(name);
+					ContainerOutputStream streams = allOpenOutputstreams.get(name);
 					if (data != null) {
 						String nameInZip = Paths.get(name).relativize(Paths.get(lastName)).toString();
-						streams._1.putNextEntry(nameInZip);
-						streams._1.write(data);
-						streams._1.closeEntry();
+						streams.putNextEntry(nameInZip);
+						streams.write(data);
+						streams.closeEntry();
 					}
 					if (closeIterator.nextIndex() <= stopIndex) {
-//						System.out.println("CLOSE:"+name );
-						streams._1.close();
-						data = Optional.ofNullable(streams._2).map(ByteArrayOutputStream::toByteArray).orElse(null);
+						streams.close();
+						data = streams.getWrittenTo()
+								.map(ByteArrayOutputStream.class::cast)
+								.map(ByteArrayOutputStream::toByteArray)
+								.orElse(null);
 						allOpenOutputstreams.remove(name);
 						lastName = name;
 					}
@@ -146,13 +148,9 @@ public abstract class AbstractRestore {
 			String akt = aktIt.previous();
 			String last = lastIt.previous();
 			if (!akt.equals(last)) {
-//				stopIndex = lastIt.nextIndex() +2;
 				break;
 			} else {
 				stopIndex--;
-//				if (!aktIt.hasPrevious() && lastIt.hasPrevious()) {
-//					stopIndex = lastIt.previousIndex() +2;
-//				}
 			}
 		}
 		return stopIndex;
@@ -179,10 +177,8 @@ public abstract class AbstractRestore {
 				}
 			}
 		}
-		
-
 		return allMatches;
 	}
 
-	protected abstract Tuple2<ContainerOutputStream, ByteArrayOutputStream> openStreams(Path path, String dest);
+	protected abstract ContainerOutputStream openStreams(Path path, String dest);
 }

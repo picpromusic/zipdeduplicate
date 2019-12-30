@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
@@ -6,17 +6,14 @@ import java.nio.file.Paths;
 
 import org.eclipse.jgit.lib.Repository;
 
-import io.vavr.Tuple;
-import io.vavr.Tuple2;
-
-public abstract class TwoLevelRestore extends AbstractRestore{
+public abstract class TwoLevelRestore extends AbstractRestore {
 
 	public TwoLevelRestore(Repository repository, String branch) {
 		super(repository, branch);
 	}
 
 	@Override
-	protected Tuple2<ContainerOutputStream, ByteArrayOutputStream> openStreams(Path path, String dest) {
+	protected ContainerOutputStream openStreams(Path path, String dest) {
 		ByteArrayOutputStream bout = null;
 		ContainerOutputStream zout;
 		Path p = Paths.get(dest);
@@ -26,14 +23,13 @@ public abstract class TwoLevelRestore extends AbstractRestore{
 			bout = new ByteArrayOutputStream();
 			zout = createInnerContainer(bout);
 		}
-		return Tuple.of(zout, bout);
+		return zout;
 	}
 
 	protected ZipContainerOutputStream createInnerContainer(ByteArrayOutputStream bout) {
-		return new ZipContainerOutputStream(bout,true);
+		return new ZipContainerOutputStream(bout, true);
 	}
-	
-	protected abstract ContainerOutputStream createOuterMostContainer(Path path, String dest);
 
+	protected abstract ContainerOutputStream createOuterMostContainer(Path path, String dest);
 
 }

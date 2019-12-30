@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.io.IOException;
 import java.util.TreeMap;
@@ -10,12 +10,9 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.TreeFormatter;
 
-import io.vavr.Tuple;
-import io.vavr.Tuple2;
-
 public class SortingTreeFormatter extends AnyObjectId {
 
-	private TreeMap<String, Tuple2<FileMode, ObjectId>> data;
+	private TreeMap<String, FileModeAndObjectId> data;
 	private Supplier<ObjectInserter> oiSupplier;
 
 	public SortingTreeFormatter(Supplier<ObjectInserter> oiSupplier) {
@@ -24,7 +21,7 @@ public class SortingTreeFormatter extends AnyObjectId {
 	}
 
 	public void append(String name, FileMode fm, ObjectId id) {
-		this.data.put(name, Tuple.of(fm, id));
+		this.data.put(name, new FileModeAndObjectId(fm, id));
 	}
 
 	public boolean contains(String name) {
@@ -33,9 +30,6 @@ public class SortingTreeFormatter extends AnyObjectId {
 
 	private int gitNameSorting(String o1, String o2) {
 		return o1.compareTo(o2);
-//		int minLength = Math.min(o1.length(), o2.length());
-//		int comp = o1.substring(0, minLength).compareTo(o2.substring(0, minLength));
-//		return comp != 0 ? comp : o2.length() - o1.length();
 	}
 
 	@Override
@@ -43,11 +37,21 @@ public class SortingTreeFormatter extends AnyObjectId {
 		try {
 			TreeFormatter treeFormatter = new TreeFormatter(this.data.size());
 			data.entrySet().forEach(e -> {
-				treeFormatter.append(e.getKey(), e.getValue()._1(), e.getValue()._2());
+				treeFormatter.append(e.getKey(), e.getValue().fm, e.getValue().id);
 			});
 			return oiSupplier.get().insert(treeFormatter);
 		} catch (IOException e1) {
 			throw new RuntimeException(e1);
+		}
+	}
+
+	public static class FileModeAndObjectId {
+		private final FileMode fm;
+		private final ObjectId id;
+
+		public FileModeAndObjectId(FileMode fm, ObjectId id) {
+			this.fm = fm;
+			this.id = id;
 		}
 	}
 }

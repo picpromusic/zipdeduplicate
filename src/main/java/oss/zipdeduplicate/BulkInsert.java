@@ -1,4 +1,4 @@
-package jardeduplicate;
+package oss.zipdeduplicate;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -155,7 +155,7 @@ public class BulkInsert {
 			RevCommit commit = Commit.parse(repo.newObjectReader().newReader().open(objectId).getBytes());
 			return DescriptionUtil.extractDesciptionRawData(git.getRepository(), commit);
 		} catch (IOException e) {
-			return null;
+			return new byte[0];
 		}
 	}
 
@@ -216,7 +216,7 @@ public class BulkInsert {
 					.filter(Files::isRegularFile)//
 					.flatMap(p -> {
 						Path relP = root.relativize(p);
-						return singleFileToGit(zipInfoCollector.resolve(relP.getParent()), p, relP);
+						return singleFileToGit(zipInfoCollector, p, relP);
 					});
 
 			Map<Integer, List<PathWithObjectId>> splitted = filesWithObjectId
@@ -384,14 +384,9 @@ public class BulkInsert {
 		boolean entryProcessed = false;
 		List<Future<Stream<PathWithObjectId>>> futures = new ArrayList<>();
 		ZipEntry nextEntry = firstEntry;
-		ZipInfo newZipFile = null;
 		while (nextEntry != null) {
 			if (!entryProcessed && zipInfoCollector != null) {
-				newZipFile = zipInfoCollector.newZipFile(pin);
-				zipInfoCollector = zipInfoCollector.resolve(pin);
-			}
-			if (newZipFile != null) {
-				newZipFile.newEntry(nextEntry);
+				zipInfoCollector.newZipFile(pin);
 			}
 			if (!nextEntry.isDirectory()) {
 				ByteArrayOutputStream bout = copyToByteArrayOutput(zin);
