@@ -4,12 +4,13 @@ import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.Repository;
 
 public abstract class TwoLevelRestore extends AbstractRestore {
 
-	public TwoLevelRestore(Repository repository, String branch) {
-		super(repository, branch);
+	public TwoLevelRestore(Git git, String branch, String additionalData) {
+		super(git, branch, additionalData);
 	}
 
 	@Override
@@ -27,7 +28,11 @@ public abstract class TwoLevelRestore extends AbstractRestore {
 	}
 
 	protected ZipContainerOutputStream createInnerContainer(ByteArrayOutputStream bout) {
-		return new ZipContainerOutputStream(bout, true);
+		return new ZipContainerOutputStream(bout, isRestoreCompressed());
+	}
+	
+	protected boolean isRestoreCompressed() {
+		return true;
 	}
 
 	protected abstract ContainerOutputStream createOuterMostContainer(Path path, String dest);
