@@ -7,3 +7,19 @@ echo "SETUP" > README
 git add README
 git commit -m "setup"
 git push
+
+Example of BulkInsert (Folder)
+BulkInsert <.git-Folder-of-local-git zipdedup.local.git> <folder-to-import> <uri-to-store-the-folder> <additional-classifier>
+BulkInsert /tmp/zipdedup.local.git ${folder_prompt} http://www-my-repository/groupId/artifactId 20.4.2:3453abcf
+
+Example of BulkInsert (Zip-File)
+BulkInsert <.git-Folder-of-local-git zipdedup.local.git> <file-to-import> <uri-to-store-the-zip> <additional-classifier>
+BulkInsert /tmp/zipdedup.local.git ${file_prompt} http://www-my-repository/groupId/artifactId 20.4.2:3453abcf
+
+Example of FolderRestore
+FolderRestore <.git-Folder-of-local-git zipdedup.local.git> <uri-to-restore-from> <restore-folder-name> <additional-classifier>
+FolderRestore /tmp/zipdedup.local.git http://www-my-repository/groupId/artifactId restore-folder-name 20.4.2:latests
+
+Example of ZipRestore
+ZipRestore <.git-Folder-of-local-git zipdedup.local.git> <uri-to-restore-from> 
+ZipRestore /tmp/zipdedup.local.git http://www-my-repository/groupId/artifactId.zip
