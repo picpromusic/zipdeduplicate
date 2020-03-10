@@ -10,6 +10,7 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.TransportException;
+import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.RefSpec;
 
@@ -45,7 +46,7 @@ public class FetchBeforeRestore {
 		}
 
 		FetchResult fetchResult = git.fetch().setRemote(ORIGIN).setRefSpecs(refSpecs)
-				.setProgressMonitor(new PrintingProgressMonitor()).setForceUpdate(true).call();
+				.setProgressMonitor(new TextProgressMonitor()).setForceUpdate(true).call();
 		System.out.println(fetchResult.getMessages());
 	}
 

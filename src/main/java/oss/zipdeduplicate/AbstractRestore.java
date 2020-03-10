@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
@@ -17,31 +18,27 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
-import org.eclipse.jgit.api.errors.InvalidRemoteException;
-import org.eclipse.jgit.api.errors.NoHeadException;
-import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.errors.MissingObjectException;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.DepthWalk.Commit;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
 import oss.zipdeduplicate.DescriptionUtil.PathAsStringAndObjectId;
 
-public abstract class AbstractRestore {
+public abstract class AbstractRestore implements RestoreFunction {
 
 	private static final String REFS_DATA_PREFIX = "refs/heads/data_";
 	private static final String REFS_DESC_PREFIX = "refs/heads/desc_";
-	private static final String ORIGIN = "origin";
 
 	private Repository repo;
 	private String branchName;
@@ -64,65 +61,101 @@ public abstract class AbstractRestore {
 
 	protected void reportCreatedPath(Path p) {
 		do {
-			existingPathes.remove(p);
+			existingPathes.remove(p.normalize());
 			p = p.getParent();
 		} while (p != null);
 	}
 
-	public void restoreTo(Path path)
-			throws IOException, ClassNotFoundException, InvalidRemoteException, TransportException, GitAPIException {
-		long start = System.currentTimeMillis();
-		rememberExistingFiles(path);
-		fetch();
-		ObjectId commitId = repo.getRefDatabase().findRef("desc_" + branchName).getObjectId();
-		RevCommit commit = searchCommit(commitId);
+	@Override
+	public void restoreTo(Path path) {
+		int retryCounter = 0;
+		while (retryCounter < 5) {
+			try {
+				long start = System.currentTimeMillis();
+				if (deleteOthers()) {
+					rememberExistingFiles(path);
+				} else {
+					existingPathes = new HashSet<>();
+				}
+				RevCommit commit = readCommit(searchDescCommit());
 
-		ObjectId contentCommitId = null;
+				ObjectId contentCommitId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
+				commit = readCommit(contentCommitId);
 
-		contentCommitId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
+				try (TreeWalk walk = new TreeWalk(repo)) {
+					walk.setRecursive(true);
+					walk.addTree(commit.getTree());
+					String lastPathString = null;
+					while (walk.next()) {
+						String pathString = walk.getPathString();
+						ObjectId objectId = walk.getObjectId(0);
+						closeAllDone(lastPathString, pathString);
+						lastPathString = processElement(path, pathString, objectId);
+					}
+					closeAllDone(lastPathString, null);
+				}
 
-		commit = readCommit(contentCommitId);
-		try (TreeWalk walk = new TreeWalk(repo)) {
+				if (deleteOthers()) {
+					int retryCount = 10;
+					while (retryCount > 0 && !deleteAllRemaingFiles()) {
+						retryCount--;
+						System.out.println("Retry");
+						checkExistingPathes();
+					}
+					checkExistingPathes();
 
-			walk.setRecursive(true);
-			walk.addTree(commit.getTree());
-			String lastPathString = null;
-			while (walk.next()) {
-				String pathString = walk.getPathString();
-				ObjectId objectId = walk.getObjectId(0);
-				closeAllDone(lastPathString, pathString);
-				lastPathString = processElement(path, pathString, objectId);
+					if (!existingPathes.isEmpty()) {
+						System.out.println("The following pathes couldn't be deleted:");
+						existingPathes.forEach(System.out::println);
+					}
+				}
+				System.out.println(path.toString() + " done after " + (System.currentTimeMillis() - start) + " ms");
+				return;
+			} catch (GitAPIException e) {
+				throw new RuntimeException(e);
+			} catch (IOException e) {
+				retryCounter++;
+				System.out.println(e.getMessage() + " retrying. " + retryCounter + " of 5");
+				try {
+					TimeUnit.SECONDS.sleep(retryCounter);
+				} catch (InterruptedException e1) {
+					Thread.currentThread().interrupt();
+				}
 			}
-			closeAllDone(lastPathString, null);
 		}
+	}
 
-		int retryCount = 10;
-		while (retryCount > 0 && !deleteAllRemaingFiles()) {
-			retryCount--;
-			checkExistingPathes();
+	private ObjectId searchDescCommit() throws IOException, GitAPIException {
+		ObjectId commitId = repo.getRefDatabase().findRef("desc_" + branchName).getObjectId();
+		Iterator<RevCommit> commitIter = git.log().add(commitId).call().iterator();
+		ObjectId commitId1 = null;
+		while (commitIter.hasNext() && commitId1 == null) {
+			RevCommit next = commitIter.next();
+			if (matchesAdditionalData(next.getFullMessage())) {
+				commitId1 = next.getId();
+			}
 		}
-		checkExistingPathes();
+		if (commitId1 == null) {
+			throw new IllegalStateException("No matching Data found for " + additionalData);
+		}
+		return commitId1;
+	}
 
-		if (!existingPathes.isEmpty()) {
-			System.out.println("The following pathes couldn't be deleted:");
-			existingPathes.forEach(System.out::println);
-		}
-		System.out.println();
-		System.out.println(System.currentTimeMillis() - start);
+	protected boolean deleteOthers() {
+		return false;
 	}
 
 	private void checkExistingPathes() {
 		existingPathes = existingPathes.stream().filter(Files::exists).collect(Collectors.toSet());
 	}
 
-	protected void fetch() throws InvalidRemoteException, TransportException, GitAPIException {
+	public Set<RefSpec> getFetchRefSpecs() {
+		HashSet<RefSpec> ret = new HashSet<>();
+		String descRef = REFS_DESC_PREFIX + branchName;
 		String dataRef = REFS_DATA_PREFIX + branchName;
-		RefSpec dataRefSpec = new RefSpec(dataRef + ":" + REFS_DATA_PREFIX + branchName);
-		RefSpec descRefSpec = new RefSpec(REFS_DESC_PREFIX + branchName + ":" + REFS_DESC_PREFIX + branchName);
-
-		FetchResult fetchResult = git.fetch().setRemote(ORIGIN).setRefSpecs(dataRefSpec, descRefSpec)
-				.setProgressMonitor(new PrintingProgressMonitor()).setForceUpdate(true).call();
-		System.out.println(fetchResult.getMessages());
+		ret.add(new RefSpec(descRef + ":" + descRef));
+		ret.add(new RefSpec(dataRef + ":" + dataRef));
+		return ret;
 	}
 
 	private boolean deleteAllRemaingFiles() {
@@ -131,7 +164,7 @@ public abstract class AbstractRestore {
 //				.peek(p -> System.out.println(p.getNameCount()))
 				.filter(p -> p.getNameCount() > 2).filter(Files::exists)//
 				.sorted((p1, p2) -> p2.toString().length() - p1.toString().length())//
-//				.peek(System.out::println)
+//				.peek(f -> System.out.println("Delete remaining:" + f))
 				.map(Path::toFile)//
 				.map(File::delete)//
 //				.peek(System.out::println)
@@ -139,26 +172,16 @@ public abstract class AbstractRestore {
 	}
 
 	private void rememberExistingFiles(Path path) throws IOException {
-		try (Stream<Path> walk = Files.walk(path)) {
-			existingPathes = walk.sorted(Comparator.reverseOrder()).collect(Collectors.toSet());
-		}
-	}
-
-	private RevCommit searchCommit(ObjectId objectId)
-			throws MissingObjectException, IOException, NoHeadException, GitAPIException {
-		Iterator<RevCommit> commitIter = git.log().add(objectId).call().iterator();
-		ObjectId commitId = null;
-		while (commitIter.hasNext() && commitId == null) {
-			RevCommit next = commitIter.next();
-			if (matchesAdditionalData(next.getFullMessage())) {
-				commitId = next.getId();
+		if (Files.exists(path)) {
+			try (Stream<Path> walk = Files.walk(path)) {
+				existingPathes = walk.collect(Collectors.toSet());
 			}
+		} else {
+			existingPathes = new HashSet<Path>();
 		}
-		return readCommit(commitId);
 	}
 
-	private RevCommit readCommit(ObjectId commitId)
-			throws MissingObjectException, IOException, NoHeadException, GitAPIException {
+	private RevCommit readCommit(ObjectId commitId) throws IOException {
 		return Commit.parse(reader.open(commitId).getBytes());
 	}
 
@@ -236,8 +259,9 @@ public abstract class AbstractRestore {
 					}
 					if (closeIterator.nextIndex() <= stopIndex) {
 						streams.close();
-						data = streams.getWrittenTo().map(ByteArrayOutputStream.class::cast)
-								.map(ByteArrayOutputStream::toByteArray).orElse(null);
+						data = streams.getWrittenTo().filter(ByteArrayOutputStream.class::isInstance)
+								.map(ByteArrayOutputStream.class::cast).map(ByteArrayOutputStream::toByteArray)
+								.orElse(null);
 						allOpenOutputstreams.remove(name);
 						lastName = name;
 					}

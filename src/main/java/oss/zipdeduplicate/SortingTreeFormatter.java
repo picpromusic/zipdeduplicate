@@ -21,15 +21,24 @@ public class SortingTreeFormatter extends AnyObjectId {
 	}
 
 	public void append(String name, FileMode fm, ObjectId id) {
+		if (fm == FileMode.TREE && !name.endsWith("/")) {
+			name = name + "/";
+		}
 		this.data.put(name, new FileModeAndObjectId(fm, id));
 	}
 
-	public boolean contains(String name) {
-		return this.data.containsKey(name);
-	}
-
 	private int gitNameSorting(String o1, String o2) {
-		return o1.compareTo(o2);
+		int len1 = o1.length();
+		int len2 = o2.length();
+		int minLen = Math.min(len1, len2);
+		int cmp = o1.substring(0, minLen).compareTo(o2.substring(0, minLen));
+		if (cmp != 0)
+			return cmp;
+		if (len1 < len2)
+	        return -1;
+	    if (len1 > len2)
+	        return 1;
+		return 0;
 	}
 
 	@Override
@@ -37,7 +46,12 @@ public class SortingTreeFormatter extends AnyObjectId {
 		try {
 			TreeFormatter treeFormatter = new TreeFormatter(this.data.size());
 			data.entrySet().forEach(e -> {
-				treeFormatter.append(e.getKey(), e.getValue().fm, e.getValue().id);
+				FileMode fm = e.getValue().fm;
+				String name = e.getKey();
+				if (fm == fm.TREE && name.endsWith("/")) {
+					name = name.substring(0,name.length()-1);
+				}
+				treeFormatter.append(name, fm, e.getValue().id);
 			});
 			return oiSupplier.get().insert(treeFormatter);
 		} catch (IOException e1) {

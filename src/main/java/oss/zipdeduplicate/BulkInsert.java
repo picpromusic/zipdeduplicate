@@ -14,8 +14,8 @@ import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
@@ -44,6 +44,7 @@ import org.eclipse.jgit.lib.RefDatabase;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.lib.TreeFormatter;
 import org.eclipse.jgit.revwalk.DepthWalk.Commit;
 import org.eclipse.jgit.revwalk.RevCommit;
@@ -103,8 +104,7 @@ public class BulkInsert {
 
 			bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person, additionalData);
 
-			Iterable<PushResult> call = git.push().setProgressMonitor(new PrintingProgressMonitor()).setPushAll()
-					.call();
+			Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll().call();
 			call.forEach(pr -> {
 				pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
 				Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
@@ -177,19 +177,27 @@ public class BulkInsert {
 	}
 
 	private static ObjectId fetchAndFindCommitWithTreeId(String branchName, Git git, ObjectId treeId) {
+		String dataRef = REFS_DATA_PREFIX + branchName;
 		try {
-			String dataRef = REFS_DATA_PREFIX + branchName;
 			RefSpec dataRefSpec = new RefSpec(dataRef + ":" + REFS_DATA_PREFIX + branchName);
 			RefSpec descRefSpec = new RefSpec(REFS_DESC_PREFIX + branchName + ":" + REFS_DESC_PREFIX + branchName);
 
 			FetchResult fetchResult = git.fetch().setRemote(ORIGIN).setRefSpecs(dataRefSpec, descRefSpec)
-					.setProgressMonitor(new PrintingProgressMonitor()).setForceUpdate(true).call();
+					.setProgressMonitor(new TextProgressMonitor()).setForceUpdate(true).call();
 			System.out.println(fetchResult.getMessages());
 
+		} catch (GitAPIException e) {
+		}
+
+		try {
 			RefDatabase refDatabase = git.getRepository().getRefDatabase();
 			Ref findRef = refDatabase.findRef(dataRef);
 
+			if (findRef == null) {
+				return null;
+			}
 			ObjectId objectId = findRef.getObjectId();
+
 			Iterator<RevCommit> commitIter = git.log().add(objectId).call().iterator();
 			ObjectId commitId = null;
 			while (commitIter.hasNext() && commitId == null) {
@@ -203,6 +211,7 @@ public class BulkInsert {
 		} catch (GitAPIException | IOException e) {
 			return null;
 		}
+
 	}
 
 	public static Predicate<String> onlyThisExtensions(List<String> extensions) {
@@ -462,7 +471,7 @@ public class BulkInsert {
 		return additionalFilenameZipPredicate.test(nameAsPath.getFileName().toString());
 	}
 
-	private static <T> T getResultWithoutCheckedExceptions(Future<T> fut) {
+	private static Stream<PathWithObjectId> getResultWithoutCheckedExceptions(Future<Stream<PathWithObjectId>> fut) {
 		try {
 			return fut.get();
 		} catch (InterruptedException e) {

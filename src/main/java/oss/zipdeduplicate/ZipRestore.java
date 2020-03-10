@@ -9,7 +9,6 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.InvalidRemoteException;
 import org.eclipse.jgit.api.errors.TransportException;
-import org.eclipse.jgit.lib.Repository;
 
 public class ZipRestore extends TwoLevelRestore {
 
@@ -18,7 +17,8 @@ public class ZipRestore extends TwoLevelRestore {
 		Git git;
 		git = Git.open(workPath.toFile());
 
-		Path path = Paths.get("./restore");
+		Path path = Paths.get("./restore/others");
+		Files.createDirectories(path);
 
 		new ZipRestore(git, args[1],args[2]).restoreTo(path);
 
@@ -31,12 +31,19 @@ public class ZipRestore extends TwoLevelRestore {
 	@Override
 	protected ContainerOutputStream createOuterMostContainer(Path path, String dest) {
 		try {
-			dest = dest.toLowerCase().endsWith(".zip") ? dest : dest + ".zip";
+			String lowerCase = dest.toLowerCase();
+			boolean zip = lowerCase.endsWith(".zip") || lowerCase.endsWith(".ear") || lowerCase.endsWith(".war");
+			dest = zip ? dest : dest + ".zip";
 			Path zipPath = path.resolve(dest);
 			reportCreatedPath(zipPath);
 			return new ZipContainerOutputStream(Files.newOutputStream(zipPath), false);
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
+	}
+	
+	@Override
+	protected boolean isRestoreCompressed() {
+		return false;
 	}
 }
