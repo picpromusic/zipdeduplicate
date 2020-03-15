@@ -51,6 +51,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
+import org.eclipse.jgit.transport.RemoteRefUpdate.Status;
 
 public class BulkInsert {
 
@@ -99,16 +100,33 @@ public class BulkInsert {
 
 			BulkInsert bInsert = new BulkInsert(git, onlyThisExtensions(extensions));
 			ObjectId treeId = bInsert.doIt(pathToInput, zipInfoCollector);
-			ObjectId commitId = bInsert.createOrFindCommit(branchName, person, treeId);
-			zipInfoCollector.linkDataContainer(commitId);
+			boolean pushedSuccessful = false;
+			do {
+				ObjectId commitId = bInsert.createOrFindCommit(branchName, person, treeId);
+				zipInfoCollector.linkDataContainer(commitId);
 
-			bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person, additionalData);
+				bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person, additionalData);
 
-			Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll().call();
-			call.forEach(pr -> {
-				pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
-				Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
-			});
+				Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll()
+						.call();
+				Iterator<PushResult> iterator = call.iterator();
+				pushedSuccessful = true;
+				while (iterator.hasNext()) {
+					if (iterator.next().getRemoteUpdates().stream()
+							.anyMatch(//
+							u -> u.getStatus() != Status.UP_TO_DATE && //
+									u.getStatus() != Status.OK)) {
+						pushedSuccessful = false;
+					}
+				}
+				call.forEach(pr -> {
+					pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
+					Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
+				});
+				if (!pushedSuccessful) {
+					System.out.println("Retry");
+				}
+			} while (!pushedSuccessful);
 		}
 
 	}
