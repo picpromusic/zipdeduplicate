@@ -2,7 +2,7 @@
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
-	<groupId>oss.zipdeduplicate</groupId>
+	<groupId>io.github.picpromusic</groupId>
 	<artifactId>zipdeduplicate</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<properties>
@@ -23,7 +23,6 @@
 			<groupId>org.slf4j</groupId>
 			<artifactId>slf4j-simple</artifactId>
 			<version>${slf4j.version}</version>
-			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>junit</groupId>
@@ -32,4 +31,120 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<!-- other Maven plugins ... -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>3.1.1</version>
+
+				<configuration>
+					<descriptorRefs>
+						<descriptorRef>jar-with-dependencies</descriptorRef>
+					</descriptorRefs>
+				</configuration>
+
+				<executions>
+					<execution>
+						<id>make-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+					</execution>
+				</executions>
+
+			</plugin>
+		</plugins>
+	</build>
+	<profiles>
+		<profile>
+			<id>release</id>
+			<build>
+				<!-- create source jar -->
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-source-plugin</artifactId>
+						<version>2.1.1</version>
+						<executions>
+							<execution>
+								<id>attach-sources</id>
+								<phase>verify</phase>
+								<goals>
+									<!-- produce source artifact for project main sources -->
+									<goal>jar-no-fork</goal>
+									<!-- produce test source artifact for project test sources -->
+									<goal>test-jar-no-fork</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+					<!-- create javadoc -->
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-javadoc-plugin</artifactId>
+						<version>2.9.1</version>
+						<configuration>
+							<detectLinks />
+							<includeDependencySources>true</includeDependencySources>
+							<dependencySourceIncludes>
+								<dependencySourceInclude>com.invariantproperties.project.student:*</dependencySourceInclude>
+							</dependencySourceIncludes>
+							<!-- heavily used dependencies -->
+							<links>
+								<link>https://docs.oracle.com/javase/8/docs/api/</link>
+								<link>https://download.eclipse.org/jgit/site/5.3.6.201910020505-r/org.eclipse.jgit/apidocs</link>
+							</links>
+						</configuration>
+						<executions>
+							<execution>
+								<id>aggregate</id>
+								<!-- <phase>site</phase> -->
+								<phase>package</phase>
+								<goals>
+									<goal>aggregate</goal>
+									<goal>jar</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+			<reporting>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>2.9.1</version>
+                        <configuration>
+                            <!-- Default configuration for all reports -->
+                        </configuration>
+                        <reportSets>
+                            <reportSet>
+                                <id>non-aggregate</id>
+                                <configuration>
+                                    <!-- Specific configuration for the non aggregate report -->
+                                </configuration>
+                                <reports>
+                                    <report>javadoc</report>
+                                </reports>
+                            </reportSet>
+                            <reportSet>
+                                <id>aggregate</id>
+                                <configuration>
+                                    <!-- Specific configuration for the aggregate report -->
+                                </configuration>
+                                <reports>
+                                    <report>aggregate</report>
+                                </reports>
+                            </reportSet>
+                        </reportSets>
+                    </plugin>
+                </plugins>
+            </reporting>			
+		</profile>
+	</profiles>
 </project>

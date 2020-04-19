@@ -1,4 +1,4 @@
-package oss.zipdeduplicate;
+package io.github.picpromusic.zipdeduplicate;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;

@@ -1,4 +1,4 @@
-package oss.zipdeduplicate;
+package io.github.picpromusic.zipdeduplicate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -33,7 +33,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
-import oss.zipdeduplicate.DescriptionUtil.PathAsStringAndObjectId;
+import io.github.picpromusic.zipdeduplicate.DescriptionUtil.PathAsStringAndObjectId;
 
 public abstract class AbstractRestore implements RestoreFunction {
 

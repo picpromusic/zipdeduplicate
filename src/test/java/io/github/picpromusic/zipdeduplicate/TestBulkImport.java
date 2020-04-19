@@ -1,4 +1,4 @@
-package oss.zipdeduplicate;
+package io.github.picpromusic.zipdeduplicate;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -22,8 +22,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
-import oss.zipdeduplicate.BulkInsert;
-import oss.zipdeduplicate.DefaultZipInfoCollector;
+import io.github.picpromusic.zipdeduplicate.BulkInsert;
+import io.github.picpromusic.zipdeduplicate.DefaultZipInfoCollector;
 
 public class TestBulkImport extends AbstractGitTest {
 
