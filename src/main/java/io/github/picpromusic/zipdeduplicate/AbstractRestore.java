@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.Set;
@@ -78,7 +79,6 @@ public abstract class AbstractRestore implements RestoreFunction {
 					existingPathes = new HashSet<>();
 				}
 				RevCommit commit = readCommit(searchDescCommit());
-
 				ObjectId contentCommitId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
 				commit = readCommit(contentCommitId);
 
@@ -224,7 +224,8 @@ public abstract class AbstractRestore implements RestoreFunction {
 			while (listIterator.hasPrevious()) {
 				String destZipContainer = listIterator.previous();
 				Path actPath = Paths.get(destZipContainer);
-				outputStream = allOpenOutputstreams.computeIfAbsent(destZipContainer, k -> openStreams(path, k))//
+				outputStream = allOpenOutputstreams.computeIfAbsent(destZipContainer,
+						k -> openStreams(path, k))//
 				;
 
 				outerZipPath = actPath;

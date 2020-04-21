@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -86,10 +87,20 @@ public class BulkInsert {
 	}
 
 	public static void main(String[] args) throws GitAPIException, IOException {
-		Path pathToInput = Paths.get(args[1]);
-		String branchName = args[2].replaceFirst("http://", "").replace(':', '_');
-		Path workPath = Paths.get(args[0]);
-		String additionalData = args.length > 3 ? args[3] : null;
+		boolean push = true;
+		List<String> arguments = new ArrayList(Arrays.asList(args));
+		Map<String, String> variables = new TreeMap<>();
+		while (arguments.get(0).startsWith("-")) {
+			String arg = arguments.remove(0);
+			if (arg.equalsIgnoreCase("-nopush")) {
+				push = false;
+			}
+		}
+
+		Path workPath = Paths.get(arguments.remove(0));
+		Path pathToInput = Paths.get(arguments.remove(0));
+		String branchName = arguments.remove(0).replaceFirst("http://", "").replace(':', '_');
+		String additionalData = !arguments.isEmpty() ? arguments.remove(0) : null;
 
 		try (Git git = openOrCreateGit(workPath)) {
 			List<String> extensions = Arrays.asList(".jar", ".war", ".ear", ".zip");
@@ -107,26 +118,28 @@ public class BulkInsert {
 
 				bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person, additionalData);
 
-				Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll()
-						.call();
-				Iterator<PushResult> iterator = call.iterator();
-				pushedSuccessful = true;
-				while (iterator.hasNext()) {
-					if (iterator.next().getRemoteUpdates().stream()
-							.anyMatch(//
-							u -> u.getStatus() != Status.UP_TO_DATE && //
-									u.getStatus() != Status.OK)) {
-						pushedSuccessful = false;
+				if (push) {
+					Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll()
+							.call();
+					Iterator<PushResult> iterator = call.iterator();
+					pushedSuccessful = true;
+					while (iterator.hasNext()) {
+						if (iterator.next().getRemoteUpdates().stream().anyMatch(//
+								u -> u.getStatus() != Status.UP_TO_DATE && //
+										u.getStatus() != Status.OK)) {
+							pushedSuccessful = false;
+						}
+					}
+					System.out.println();
+					call.forEach(pr -> {
+						pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
+						Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
+					});
+					if (!pushedSuccessful) {
+						System.out.println("Retry");
 					}
 				}
-				call.forEach(pr -> {
-					pr.getRemoteUpdates().forEach(u -> System.out.println(u.getRemoteName() + " " + u.getStatus()));
-					Optional.ofNullable(pr.getMessages()).ifPresent(System.out::println);
-				});
-				if (!pushedSuccessful) {
-					System.out.println("Retry");
-				}
-			} while (!pushedSuccessful);
+			} while (push && !pushedSuccessful);
 		}
 
 	}
