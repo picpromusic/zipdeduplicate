@@ -24,16 +24,18 @@ public class DescriptionUtil {
 
 		ByteArrayInputStream bin = new ByteArrayInputStream(extractDesciptionRawData(repo, commit));
 		BufferedReader bufr = new BufferedReader(new InputStreamReader(bin));
-		ObjectId contentCommitId = ObjectId.fromString(bufr.readLine());
-		String content = bufr.readLine();
-		while (content != null) {
-			if (content.endsWith("/")) {
-				content = content.substring(0, content.length() - 1);
+		ObjectId contentTreeId = ObjectId.fromString(bufr.readLine());
+		if (allZipPathes != null) {
+			String content = bufr.readLine();
+			while (content != null) {
+				if (content.endsWith("/")) {
+					content = content.substring(0, content.length() - 1);
+				}
+				allZipPathes.put(content, new TreeSet<PathAsStringAndObjectId>(onlyPathCompare()));
+				content = bufr.readLine();
 			}
-			allZipPathes.put(content, new TreeSet<PathAsStringAndObjectId>(onlyPathCompare()));
-			content = bufr.readLine();
 		}
-		return contentCommitId;
+		return contentTreeId;
 	}
 
 	public static byte[] extractDesciptionRawData(Repository repo, RevCommit commit) throws IOException {

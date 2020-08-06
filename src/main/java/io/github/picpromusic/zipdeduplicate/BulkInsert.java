@@ -57,8 +57,6 @@ import org.eclipse.jgit.transport.RemoteRefUpdate.Status;
 public class BulkInsert {
 
 	private static final String ORIGIN = "origin";
-	private static final String REFS_DATA_PREFIX = "refs/heads/data_";
-	private static final String REFS_DESC_PREFIX = "refs/heads/desc_";
 	private static final Integer NO_PARENT = 0;
 	private static final Integer WITH_PARENT = 1;
 
@@ -68,6 +66,7 @@ public class BulkInsert {
 	private ExecutorService poolForUnlimitedAmountOfJoins;
 	private Predicate<String> additionalFilenameZipPredicate;
 	private Git git;
+	private FindCommitFunction findCommitFunction;
 
 	public BulkInsert(Git git) {
 		this(git, (s) -> true);
@@ -78,6 +77,7 @@ public class BulkInsert {
 		this.repo = git.getRepository();
 		this.additionalFilenameZipPredicate = additionalFilenameZipPredicate;
 		this.poolForUnlimitedAmountOfJoins = Executors.newCachedThreadPool(BulkInsert::deamonThreads);
+		this.findCommitFunction = new FindCommitFunction(git);
 	}
 
 	private static Thread deamonThreads(Runnable r) {
@@ -88,8 +88,7 @@ public class BulkInsert {
 
 	public static void main(String[] args) throws GitAPIException, IOException {
 		boolean push = true;
-		List<String> arguments = new ArrayList(Arrays.asList(args));
-		Map<String, String> variables = new TreeMap<>();
+		List<String> arguments = new ArrayList<>(Arrays.asList(args));
 		while (arguments.get(0).startsWith("-")) {
 			String arg = arguments.remove(0);
 			if (arg.equalsIgnoreCase("-nopush")) {
@@ -99,7 +98,7 @@ public class BulkInsert {
 
 		Path workPath = Paths.get(arguments.remove(0));
 		Path pathToInput = Paths.get(arguments.remove(0));
-		String branchName = arguments.remove(0).replaceFirst("http://", "").replace(':', '_');
+		Branch branch = ZipDedupUtils.urlToBranchName(arguments.remove(0));
 		String additionalData = !arguments.isEmpty() ? arguments.remove(0) : null;
 
 		try (Git git = openOrCreateGit(workPath)) {
@@ -107,16 +106,18 @@ public class BulkInsert {
 
 			ZipInfoCollector zipInfoCollector = new DefaultZipInfoCollector();
 
-			PersonIdent person = new PersonIdent("test", "test@zipdeduplicate.incubator");
+			PersonIdent person = ZipDedupUtils.getDataCommitPersonIdent();
 
 			BulkInsert bInsert = new BulkInsert(git, onlyThisExtensions(extensions));
 			ObjectId treeId = bInsert.doIt(pathToInput, zipInfoCollector);
 			boolean pushedSuccessful = false;
 			do {
-				ObjectId commitId = bInsert.createOrFindCommit(branchName, person, treeId);
-				zipInfoCollector.linkDataContainer(commitId);
+				ObjectId commitId = bInsert.createCommitIfTreeAbsent(branch, person, treeId);
+				zipInfoCollector.linkDataContainer(treeId);
 
-				bInsert.ensureDescriptionCommitOnHeadOfBranch(branchName, zipInfoCollector, person, additionalData);
+				// Use actual date and time
+				person = ZipDedupUtils.getDescCommitPersonIdent();
+				bInsert.ensureDescriptionCommitOnHeadOfBranch(branch, zipInfoCollector, person, additionalData);
 
 				if (push) {
 					Iterable<PushResult> call = git.push().setProgressMonitor(new TextProgressMonitor()).setPushAll()
@@ -144,11 +145,11 @@ public class BulkInsert {
 
 	}
 
-	private void ensureDescriptionCommitOnHeadOfBranch(String branchName, ZipInfoCollector zipInfoCollector,
+	private void ensureDescriptionCommitOnHeadOfBranch(Branch branch, ZipInfoCollector zipInfoCollector,
 			PersonIdent person, String additionalData) throws IOException, GitAPIException {
-		byte[] rawDescriptionDataInLastCommit = getRawDescriptionDataInLastCommit(branchName);
+		byte[] rawDescriptionDataInLastCommit = getRawDescriptionDataInLastCommit(branch);
 		byte[] dumpInfo = zipInfoCollector.dumpInfo();
-		boolean sameAdditionalData = Objects.equals(additionalData, getComment(branchName));
+		boolean sameAdditionalData = Objects.equals(additionalData, getComment(branch));
 
 		if (!sameAdditionalData || !Arrays.equals(dumpInfo, rawDescriptionDataInLastCommit)) {
 			ObjectInserter oi = repo.newObjectInserter();
@@ -156,15 +157,15 @@ public class BulkInsert {
 			TreeFormatter treeFormatter = new TreeFormatter(1);
 			treeFormatter.append("description", FileMode.REGULAR_FILE, treeId);
 			treeId = oi.insert(treeFormatter);
-			insertCommitOnBranch(treeId, REFS_DESC_PREFIX + branchName, person, additionalData);
+			insertCommitOnBranch(treeId, branch.getDescBranchAsRef(), person, additionalData);
 		}
 	}
 
-	private ObjectId createOrFindCommit(String branchName, PersonIdent person, ObjectId treeId)
+	private ObjectId createCommitIfTreeAbsent(Branch branch, PersonIdent person, ObjectId treeId)
 			throws IOException, GitAPIException {
-		ObjectId commitId = fetchAndFindCommitWithTreeId(branchName, git, treeId);
+		ObjectId commitId = findCommitFunction.findCommitWithTreeId(branch.getDataBranchAsRef(), treeId);
 		if (commitId == null) {
-			commitId = insertCommitOnBranch(treeId, REFS_DATA_PREFIX + branchName, person, null);
+			commitId = insertCommitOnBranch(treeId, branch.getDataBranchAsRef(), person, null);
 		}
 		return commitId;
 	}
@@ -179,9 +180,9 @@ public class BulkInsert {
 		return git;
 	}
 
-	private byte[] getRawDescriptionDataInLastCommit(String branchName) {
+	private byte[] getRawDescriptionDataInLastCommit(Branch branch) {
 		try {
-			Ref findRef = git.getRepository().getRefDatabase().findRef(REFS_DESC_PREFIX + branchName);
+			Ref findRef = git.getRepository().getRefDatabase().findRef(branch.getDescBranchAsRef());
 			if (findRef == null) {
 				return null;
 			}
@@ -193,9 +194,9 @@ public class BulkInsert {
 		}
 	}
 
-	private String getComment(String branchName) {
+	private String getComment(Branch branch) {
 		try {
-			Ref findRef = git.getRepository().getRefDatabase().findRef(REFS_DESC_PREFIX + branchName);
+			Ref findRef = git.getRepository().getRefDatabase().findRef(branch.getDescBranchAsRef());
 			if (findRef == null) {
 				return null;
 			}
@@ -205,44 +206,6 @@ public class BulkInsert {
 		} catch (IOException e) {
 			return null;
 		}
-	}
-
-	private static ObjectId fetchAndFindCommitWithTreeId(String branchName, Git git, ObjectId treeId) {
-		String dataRef = REFS_DATA_PREFIX + branchName;
-		try {
-			RefSpec dataRefSpec = new RefSpec(dataRef + ":" + REFS_DATA_PREFIX + branchName);
-			RefSpec descRefSpec = new RefSpec(REFS_DESC_PREFIX + branchName + ":" + REFS_DESC_PREFIX + branchName);
-
-			FetchResult fetchResult = git.fetch().setRemote(ORIGIN).setRefSpecs(dataRefSpec, descRefSpec)
-					.setProgressMonitor(new TextProgressMonitor()).setForceUpdate(true).call();
-			System.out.println(fetchResult.getMessages());
-
-		} catch (GitAPIException e) {
-		}
-
-		try {
-			RefDatabase refDatabase = git.getRepository().getRefDatabase();
-			Ref findRef = refDatabase.findRef(dataRef);
-
-			if (findRef == null) {
-				return null;
-			}
-			ObjectId objectId = findRef.getObjectId();
-
-			Iterator<RevCommit> commitIter = git.log().add(objectId).call().iterator();
-			ObjectId commitId = null;
-			while (commitIter.hasNext() && commitId == null) {
-				RevCommit next = commitIter.next();
-				ObjectId id = next.getTree().getId();
-				if (treeId.equals(id)) {
-					commitId = next.getId();
-				}
-			}
-			return commitId;
-		} catch (GitAPIException | IOException e) {
-			return null;
-		}
-
 	}
 
 	public static Predicate<String> onlyThisExtensions(List<String> extensions) {

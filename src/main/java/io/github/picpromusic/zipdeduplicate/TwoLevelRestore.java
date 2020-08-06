@@ -9,7 +9,7 @@ import org.eclipse.jgit.lib.Repository;
 
 public abstract class TwoLevelRestore extends AbstractRestore {
 
-	public TwoLevelRestore(Git git, String branch, String additionalData) {
+	public TwoLevelRestore(Git git, Branch branch, String additionalData) {
 		super(git, branch, additionalData);
 	}
 

@@ -26,7 +26,7 @@ public class FolderRestore extends TwoLevelRestore {
 		ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 		List<Future<?>> futures = new ArrayList<>();
 		for (int i = 1; i < args.length; i += 3) {
-			String branch = args[i + 0];
+			Branch branch = ZipDedupUtils.urlToBranchName(args[i + 0]);
 			String additionalData = args[i + 1];
 			String restoreTo = i + 2 < args.length ? args[i + 2] : null;
 			futures.add((executor.submit(FolderRestore.restore(git, branch, additionalData, restoreTo))));
@@ -44,11 +44,10 @@ public class FolderRestore extends TwoLevelRestore {
 		executor.shutdown();
 	}
 
-	private static Runnable restore(Git git, String branch, String additionalData, String restoreTo) {
+	private static Runnable restore(Git git, Branch branch, String additionalData, String restoreTo) {
 		return () -> {
 			Path path = Paths.get("./restore");
-			String branchName = ZipDedupUtils.urlToBranchName(branch);
-			FolderRestore folderRestore = new FolderRestore(git, branchName, additionalData);
+			FolderRestore folderRestore = new FolderRestore(git, branch, additionalData);
 			if (restoreTo != null) {
 				path = Paths.get(restoreTo);
 				folderRestore.withReplaceTopLevel(".");
@@ -86,7 +85,7 @@ public class FolderRestore extends TwoLevelRestore {
 		return false;
 	}
 
-	public FolderRestore(Git git, String branch, String additionalData) {
+	public FolderRestore(Git git, Branch branch, String additionalData) {
 		super(git, branch, additionalData);
 	}
 

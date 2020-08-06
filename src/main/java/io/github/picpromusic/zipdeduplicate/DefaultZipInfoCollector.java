@@ -14,7 +14,7 @@ import org.eclipse.jgit.lib.ObjectId;
 
 public class DefaultZipInfoCollector implements ZipInfoCollector {
 
-	private String dataContainer;
+	private String treeId;
 	private List<String> allZipPathes;
 	private String prefix;
 	private static Charset UTF8 = Charset.forName("UTF-8");
@@ -31,7 +31,7 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 	@Override
 	public byte[] dumpInfo() {
 		StringBuilder sb = new StringBuilder();
-		sb.append(dataContainer);
+		sb.append(treeId);
 		sb.append("\n");
 		SortedSet<String> allSortedPathes = new TreeSet<>();
 		allSortedPathes.addAll(allZipPathes);
@@ -46,8 +46,8 @@ public class DefaultZipInfoCollector implements ZipInfoCollector {
 	}
 
 	@Override
-	public void linkDataContainer(ObjectId commitId) {
-		this.dataContainer = ObjectId.toString(commitId);
+	public void linkDataContainer(ObjectId treeId) {
+		this.treeId = ObjectId.toString(treeId);
 	}
 
 	List<String> getAllZipPathes() {

@@ -8,12 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
-import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Optional;
 import java.util.Set;
@@ -30,7 +28,9 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.DepthWalk.Commit;
+import org.eclipse.jgit.revwalk.DepthWalk.RevWalk;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.treewalk.TreeWalk;
 
@@ -38,11 +38,8 @@ import io.github.picpromusic.zipdeduplicate.DescriptionUtil.PathAsStringAndObjec
 
 public abstract class AbstractRestore implements RestoreFunction {
 
-	private static final String REFS_DATA_PREFIX = "refs/heads/data_";
-	private static final String REFS_DESC_PREFIX = "refs/heads/desc_";
-
 	private Repository repo;
-	private String branchName;
+	private Branch branch;
 	private ObjectReader reader;
 	private TreeMap<String, TreeSet<PathAsStringAndObjectId>> allZipPathes;
 	private TreeMap<String, ContainerOutputStream> allOpenOutputstreams;
@@ -50,12 +47,12 @@ public abstract class AbstractRestore implements RestoreFunction {
 	private Git git;
 	private String additionalData;
 
-	public AbstractRestore(Git git, String branch, String additionalData) {
+	public AbstractRestore(Git git, Branch branch, String additionalData) {
 		this.git = git;
 		this.additionalData = additionalData;
 		this.repo = git.getRepository();
 		this.reader = this.repo.newObjectReader();
-		this.branchName = branch;
+		this.branch = branch;
 		allZipPathes = new TreeMap<>();
 		allOpenOutputstreams = new TreeMap<>();
 	}
@@ -79,12 +76,11 @@ public abstract class AbstractRestore implements RestoreFunction {
 					existingPathes = new HashSet<>();
 				}
 				RevCommit commit = readCommit(searchDescCommit());
-				ObjectId contentCommitId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
-				commit = readCommit(contentCommitId);
-
+				ObjectId contentTreeId = DescriptionUtil.extractDescription(repo, commit, allZipPathes);
+				RevTree tree = new RevWalk(repo, Integer.MAX_VALUE).lookupTree(contentTreeId);
 				try (TreeWalk walk = new TreeWalk(repo)) {
 					walk.setRecursive(true);
-					walk.addTree(commit.getTree());
+					walk.addTree(tree);
 					String lastPathString = null;
 					while (walk.next()) {
 						String pathString = walk.getPathString();
@@ -126,7 +122,7 @@ public abstract class AbstractRestore implements RestoreFunction {
 	}
 
 	private ObjectId searchDescCommit() throws IOException, GitAPIException {
-		ObjectId commitId = repo.getRefDatabase().findRef("desc_" + branchName).getObjectId();
+		ObjectId commitId = repo.getRefDatabase().findRef(branch.getDescBranch()).getObjectId();
 		Iterator<RevCommit> commitIter = git.log().add(commitId).call().iterator();
 		ObjectId commitId1 = null;
 		while (commitIter.hasNext() && commitId1 == null) {
@@ -151,10 +147,8 @@ public abstract class AbstractRestore implements RestoreFunction {
 
 	public Set<RefSpec> getFetchRefSpecs() {
 		HashSet<RefSpec> ret = new HashSet<>();
-		String descRef = REFS_DESC_PREFIX + branchName;
-		String dataRef = REFS_DATA_PREFIX + branchName;
-		ret.add(new RefSpec(descRef + ":" + descRef));
-		ret.add(new RefSpec(dataRef + ":" + dataRef));
+		ret.add(branch.getFetchDescRefSpec());
+		ret.add(branch.getFetchDataRefSpec());
 		return ret;
 	}
 
@@ -224,8 +218,7 @@ public abstract class AbstractRestore implements RestoreFunction {
 			while (listIterator.hasPrevious()) {
 				String destZipContainer = listIterator.previous();
 				Path actPath = Paths.get(destZipContainer);
-				outputStream = allOpenOutputstreams.computeIfAbsent(destZipContainer,
-						k -> openStreams(path, k))//
+				outputStream = allOpenOutputstreams.computeIfAbsent(destZipContainer, k -> openStreams(path, k))//
 				;
 
 				outerZipPath = actPath;

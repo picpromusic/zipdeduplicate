@@ -36,11 +36,11 @@ public class ZipRestore extends TwoLevelRestore {
 		Files.createDirectories(path);
 		String branch = arguments.remove(0);
 		String additionalInfo = arguments.remove(0);
-		new ZipRestore(git, branch, additionalInfo).restoreTo(path);
+		new ZipRestore(git, new Branch(branch), additionalInfo).restoreTo(path);
 
 	}
 
-	public ZipRestore(Git git, String branch, String additionalData) {
+	public ZipRestore(Git git, Branch branch, String additionalData) {
 		super(git, branch, additionalData);
 	}
 

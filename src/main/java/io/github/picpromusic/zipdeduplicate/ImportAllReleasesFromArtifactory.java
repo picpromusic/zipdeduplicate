@@ -71,6 +71,7 @@ public class ImportAllReleasesFromArtifactory {
 							parameters.add(m.repo);
 							parameters.add(m.additionalInfo);
 							BulkInsert.main(parameters.toArray(new String[0]));
+							Files.delete(destPath);
 							break;
 						} catch (GitAPIException | IOException e) {
 							e.printStackTrace();
@@ -78,7 +79,6 @@ public class ImportAllReleasesFromArtifactory {
 					}
 				});
 			} catch (IOException e) {
-				// TODO Auto-generated catch block
 				e.printStackTrace();
 			}
 		}));
