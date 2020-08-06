@@ -274,7 +274,7 @@ public class BulkInsert {
 			filesGroupedByPathAndSortedByName.put(entry.getKey(), elements);
 		}
 
-		// Einfügen von
+		// Einfuegen von
 		Set<Path> allPathesContainingFiles = allFilesGroupedByPathes.keySet();
 		allPathesContainingFiles.forEach(p -> {
 			while (p.getParent() != null) {
