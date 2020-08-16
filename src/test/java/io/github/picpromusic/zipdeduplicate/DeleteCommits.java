@@ -42,11 +42,11 @@ public class DeleteCommits {
 		Repository repository = git.getRepository();
 
 		Branch revNames = new Branch(branch);
-		ObjectId keepExperiment = ObjectId.fromString("f9a799bae645d01447beb6eb641afc0ff3d368c2");
+//		ObjectId keepExperiment = ObjectId.fromString("f9a799bae645d01447beb6eb641afc0ff3d368c2");
 
 		UpdateDescBranch updateDesc = new UpdateDescBranch(git, revNames, false);
-//		updateDesc.execute(c -> commitsToDelete.contains(c.getId()));
-		updateDesc.execute(c -> !keepExperiment.equals(c));
+		updateDesc.execute(c -> commitsToDelete.contains(c.getId()));
+//		updateDesc.execute(c -> !keepExperiment.equals(c));
 
 		UpdateDataBranch updateData = new UpdateDataBranch(git);
 		updateData.execute(new Branch(branch));
