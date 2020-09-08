@@ -1,3 +1,5 @@
 {
-    "maven.view": "hierarchical"
+    "maven.view": "hierarchical",
+	"java.home": "/docker-java-home",
+	"maven.executable.path": "/usr/local/sdkman/candidates/maven/current/bin/mvn"
 }
