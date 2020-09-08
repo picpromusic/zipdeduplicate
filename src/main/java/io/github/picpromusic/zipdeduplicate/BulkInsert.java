@@ -296,7 +296,7 @@ public class BulkInsert {
 			parentTree.put(e.getKey().getFileName().toString() + "/", tf);
 		}
 
-		SortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
+		SpecialSortingTreeFormatter rootFormatter = buildTree(Paths.get(""), rootElements);
 		if (Files.isDirectory(pathToAnalyse)) {
 			rootElements = new TreeMap<String, AnyObjectId>();
 			rootElements.put(pathToAnalyse.getFileName().toString() + "/", rootFormatter);
@@ -304,6 +304,8 @@ public class BulkInsert {
 			zipInfoCollector.prefix(pathToAnalyse.getFileName().toString() + "/");
 			zipInfoCollector.newZipFile(Paths.get(""));
 		}
+		
+		rootFormatter.setDesciption(zipInfoCollector);
 		ObjectId rootDirId = rootFormatter.toObjectId();
 
 		return rootDirId;
@@ -370,8 +372,8 @@ public class BulkInsert {
 		return commitId;
 	}
 
-	private SortingTreeFormatter buildTree(Path basePath, Map<String, AnyObjectId> content) throws IOException {
-		SortingTreeFormatter tf = createNewTreeFormatter();
+	private SpecialSortingTreeFormatter buildTree(Path basePath, Map<String, AnyObjectId> content) throws IOException {
+		SpecialSortingTreeFormatter tf = createNewTreeFormatter();
 
 		for (Entry<String, AnyObjectId> e2 : content.entrySet()) {
 			AnyObjectId fileOrTree = e2.getValue();
@@ -387,8 +389,8 @@ public class BulkInsert {
 		return tf;
 	}
 
-	private SortingTreeFormatter createNewTreeFormatter() {
-		return new SortingTreeFormatter(oneObjectInserterPerThread::get);
+	private SpecialSortingTreeFormatter createNewTreeFormatter() {
+		return new SpecialSortingTreeFormatter(oneObjectInserterPerThread::get);
 	}
 
 	private static <V> Map<Path, V> sortedMapOfPathesByLengthAndName() {

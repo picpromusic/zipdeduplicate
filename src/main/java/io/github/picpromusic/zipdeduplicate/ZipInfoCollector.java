@@ -10,7 +10,7 @@ public interface ZipInfoCollector {
 
 	byte[] dumpInfo();
 
-	void linkDataContainer(ObjectId treeId);
+//	void linkDataContainer(ObjectId treeId);
 
 	void prefix(String string);
 }

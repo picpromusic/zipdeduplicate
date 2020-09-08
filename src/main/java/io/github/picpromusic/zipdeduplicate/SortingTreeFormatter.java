@@ -13,7 +13,7 @@ import org.eclipse.jgit.lib.TreeFormatter;
 public class SortingTreeFormatter extends AnyObjectId {
 
 	private TreeMap<String, FileModeAndObjectId> data;
-	private Supplier<ObjectInserter> oiSupplier;
+	protected Supplier<ObjectInserter> oiSupplier;
 
 	public SortingTreeFormatter(Supplier<ObjectInserter> oiSupplier) {
 		this.data = new TreeMap<>(this::gitNameSorting);
@@ -25,6 +25,13 @@ public class SortingTreeFormatter extends AnyObjectId {
 			name = name + "/";
 		}
 		this.data.put(name, new FileModeAndObjectId(fm, id));
+	}
+	
+	public void remove(String name,FileMode fm) {
+		if (fm == FileMode.TREE && !name.endsWith("/")) {
+			name = name + "/";
+		}
+		data.remove(name);
 	}
 
 	private int gitNameSorting(String o1, String o2) {
@@ -68,4 +75,6 @@ public class SortingTreeFormatter extends AnyObjectId {
 			this.id = id;
 		}
 	}
+
+
 }
